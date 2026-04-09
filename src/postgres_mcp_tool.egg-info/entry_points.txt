@@ -1,0 +1,2 @@
+[console_scripts]
+postgres-mcp-tool = postgres_mcp_server.server:main

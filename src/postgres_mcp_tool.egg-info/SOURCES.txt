@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/postgres_mcp_server/__init__.py
+src/postgres_mcp_server/server.py
+src/postgres_mcp_tool.egg-info/PKG-INFO
+src/postgres_mcp_tool.egg-info/SOURCES.txt
+src/postgres_mcp_tool.egg-info/dependency_links.txt
+src/postgres_mcp_tool.egg-info/entry_points.txt
+src/postgres_mcp_tool.egg-info/requires.txt
+src/postgres_mcp_tool.egg-info/top_level.txt

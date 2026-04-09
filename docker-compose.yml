@@ -1,0 +1,28 @@
+services:
+  postgres-mcp-tool:
+    build:
+      context: .
+    image: postgres-mcp-tool
+    command: ["python", "-m", "postgres_mcp_server.server"]
+    stdin_open: true
+    tty: false
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER}
+      PYTHONPATH: /app/src
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3005:3005"
+    networks:
+      - mcp-shared-net
+    volumes:
+      - ./src:/app/src:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./.env:/app/.env:ro
+
+networks:
+  mcp-shared-net:
+    name: mcp-shared-net
+    external: true

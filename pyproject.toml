@@ -1,0 +1,23 @@
+[project]
+name = "postgres-mcp-tool"
+version = "0.1.0"
+description = "MCP server to expose safe Postgres read tools to agent clients."
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.9.0",
+  "psycopg[binary]>=3.1.19",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+postgres-mcp-tool = "postgres_mcp_server.server:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
