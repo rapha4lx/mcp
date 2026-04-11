@@ -5,6 +5,12 @@ Servidor MCP em Python para expor consultas seguras de leitura ao PostgreSQL com
 ## O que ele expõe
 
 - `list_tables`: lista tabelas e views de um schema
+- `list_views`: lista views de um schema
+- `list_functions`: lista functions de um schema
+- `list_referenced_tables`: lista tabelas referenciadas por uma tabela
+- `list_referencing_tables`: lista tabelas que referenciam uma tabela
+- `list_related_tables`: versão rápida, só com nomes das tabelas relacionadas
+- `list_related_tables_detailed`: versão detalhada, com colunas e constraints
 - `describe_table`: descreve colunas de uma tabela/view
 - `query`: executa apenas `SELECT`, `WITH` e `SHOW`
 

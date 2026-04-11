@@ -125,6 +125,88 @@ def _qualified_name(schema: str, table: str) -> tuple[str, str]:
     return schema_name, table_name
 
 
+def _fetch_foreign_key_relationships(
+    schema: str,
+    table: str,
+    relation_direction: str,
+) -> list[tuple[Any, ...]]:
+    if relation_direction not in {"incoming", "outgoing"}:
+        raise ValueError("relation_direction must be 'incoming' or 'outgoing'.")
+
+    join_column = "con.confrelid" if relation_direction == "incoming" else "con.conrelid"
+
+    sql = f"""
+        with target_table as (
+            select c.oid
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = %s
+              and c.relname = %s
+        )
+        select
+            %s as relation_direction,
+            src_ns.nspname as table_schema,
+            src_cls.relname as table_name,
+            src_col.attname as column_name,
+            tgt_ns.nspname as related_table_schema,
+            tgt_cls.relname as related_table_name,
+            tgt_col.attname as related_column_name,
+            con.conname as constraint_name
+        from pg_constraint con
+        join target_table tt on tt.oid = {join_column}
+        join pg_class src_cls on src_cls.oid = con.conrelid
+        join pg_namespace src_ns on src_ns.oid = src_cls.relnamespace
+        join pg_class tgt_cls on tgt_cls.oid = con.confrelid
+        join pg_namespace tgt_ns on tgt_ns.oid = tgt_cls.relnamespace
+        join lateral unnest(con.conkey) with ordinality as src_keys(attnum, ordinality) on true
+        join lateral unnest(con.confkey) with ordinality as tgt_keys(attnum, ordinality)
+            on tgt_keys.ordinality = src_keys.ordinality
+        join pg_attribute src_col on src_col.attrelid = src_cls.oid and src_col.attnum = src_keys.attnum
+        join pg_attribute tgt_col on tgt_col.attrelid = tgt_cls.oid and tgt_col.attnum = tgt_keys.attnum
+        where con.contype = 'f'
+        order by table_schema, table_name, constraint_name
+    """
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (schema, table, relation_direction))
+        return cur.fetchall()
+
+
+def _fetch_related_table_names(
+    schema: str,
+    table: str,
+    relation_direction: str,
+) -> list[tuple[Any, ...]]:
+    if relation_direction not in {"incoming", "outgoing"}:
+        raise ValueError("relation_direction must be 'incoming' or 'outgoing'.")
+
+    join_column = "con.confrelid" if relation_direction == "incoming" else "con.conrelid"
+
+    sql = f"""
+        with target_table as (
+            select c.oid
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = %s
+              and c.relname = %s
+        )
+        select distinct
+            %s as relation_direction,
+            related_ns.nspname as related_table_schema,
+            related_cls.relname as related_table_name
+        from pg_constraint con
+        join target_table tt on tt.oid = {join_column}
+        join pg_class related_cls on related_cls.oid = con.conrelid
+        join pg_namespace related_ns on related_ns.oid = related_cls.relnamespace
+        where con.contype = 'f'
+        order by related_table_schema, related_table_name
+    """
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (schema, table, relation_direction))
+        return cur.fetchall()
+
+
 @mcp.tool()
 def list_tables(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List base tables and views visible in a schema."""
@@ -142,6 +224,108 @@ def list_tables(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
         rows = cur.fetchall()
 
     return {"schema": schema, "count": len(rows), "tables": rows}
+
+
+@mcp.tool()
+def list_views(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List views visible in a schema."""
+    sql = """
+        select
+            table_schema,
+            table_name
+        from information_schema.views
+        where table_schema = %s
+        order by table_name
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (schema,))
+        rows = cur.fetchall()
+
+    return {"schema": schema, "count": len(rows), "views": rows}
+
+
+@mcp.tool()
+def list_functions(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List functions visible in a schema."""
+    sql = """
+        select
+            routine_schema,
+            routine_name,
+            specific_name,
+            data_type
+        from information_schema.routines
+        where routine_schema = %s
+          and routine_type = 'FUNCTION'
+        order by routine_name, specific_name
+    """
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (schema,))
+        rows = cur.fetchall()
+
+    return {"schema": schema, "count": len(rows), "functions": rows}
+
+
+@mcp.tool()
+def list_referenced_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List tables referenced by foreign keys from a given table."""
+    schema_name, table_name = _qualified_name(schema, table)
+    rows = _fetch_foreign_key_relationships(schema_name, table_name, "outgoing")
+
+    return {
+        "schema": schema_name,
+        "table": table_name,
+        "count": len(rows),
+        "referenced_tables": rows,
+    }
+
+
+@mcp.tool()
+def list_referencing_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List tables that reference a given table by foreign keys."""
+    schema_name, table_name = _qualified_name(schema, table)
+    rows = _fetch_foreign_key_relationships(schema_name, table_name, "incoming")
+
+    return {
+        "schema": schema_name,
+        "table": table_name,
+        "count": len(rows),
+        "referencing_tables": rows,
+    }
+
+
+@mcp.tool()
+def list_related_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List related table names for a given table."""
+    schema_name, table_name = _qualified_name(schema, table)
+    referenced_rows = _fetch_related_table_names(schema_name, table_name, "outgoing")
+    referencing_rows = _fetch_related_table_names(schema_name, table_name, "incoming")
+
+    return {
+        "schema": schema_name,
+        "table": table_name,
+        "referenced_count": len(referenced_rows),
+        "referencing_count": len(referencing_rows),
+        "referenced_tables": referenced_rows,
+        "referencing_tables": referencing_rows,
+    }
+
+
+@mcp.tool()
+def list_related_tables_detailed(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
+    """List related tables with columns and constraints for a given table."""
+    schema_name, table_name = _qualified_name(schema, table)
+    referenced_rows = _fetch_foreign_key_relationships(schema_name, table_name, "outgoing")
+    referencing_rows = _fetch_foreign_key_relationships(schema_name, table_name, "incoming")
+
+    return {
+        "schema": schema_name,
+        "table": table_name,
+        "referenced_count": len(referenced_rows),
+        "referencing_count": len(referencing_rows),
+        "referenced_tables": referenced_rows,
+        "referencing_tables": referencing_rows,
+    }
 
 
 @mcp.tool()
