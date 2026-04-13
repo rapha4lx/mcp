@@ -77,7 +77,7 @@ Estrutura esperada:
 }
 ```
 
-O projeto inclui um exemplo em [mcp-config.example.json](/home/rferro/mcp/mcp-config.example.json).
+O projeto inclui um exemplo em [mcp-config.example.json](./mcp-config.example.json).
 
 Regras de uso para o chat:
 
@@ -100,19 +100,19 @@ postgres-mcp-tool
 Build da imagem:
 
 ```bash
-docker build -t postgres-mcp-tool /home/rferro/mcp
+docker build -t postgres-mcp-tool .
 ```
 
 Execução usando o `.env` local:
 
 ```bash
-docker run --rm -i --env-file /home/rferro/mcp/.env postgres-mcp-tool
+docker run --rm -i --env-file .env postgres-mcp-tool
 ```
 
 Publicando a porta `3005`:
 
 ```bash
-docker run --rm -i -p 3005:3005 --env-file /home/rferro/mcp/.env postgres-mcp-tool
+docker run --rm -i -p 3005:3005 --env-file .env postgres-mcp-tool
 ```
 
 Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajuste o host do `DATABASE_URL` para um endereço acessível do container. Em Linux, normalmente isso significa usar o IP da máquina na rede Docker em vez de `localhost`.
@@ -120,13 +120,13 @@ Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajus
 Com Docker Compose:
 
 ```bash
-docker compose -f /home/rferro/mcp/docker-compose.yml run --rm postgres-mcp-tool
+docker compose -f docker-compose.yml run --rm postgres-mcp-tool
 ```
 
 Para subir o serviço na porta `3005`:
 
 ```bash
-docker compose -f /home/rferro/mcp/docker-compose.yml up --build -d
+docker compose -f docker-compose.yml up --build -d
 ```
 
 O `docker-compose.yml` agora sobe o MCP em modo dinâmico por padrão, sem injetar `DATABASE_URL` no container. Isso evita falha no startup quando a conexão fixa não está disponível e deixa o fluxo centrado em `create_session`.
@@ -137,14 +137,14 @@ Exemplo de configuração em `config.toml`:
 
 ```toml
 [mcp_servers.postgres]
-command = "/home/rferro/mcp/.venv/bin/postgres-mcp-tool"
+command = "/caminho/para/o/projeto/.venv/bin/postgres-mcp-tool"
 ```
 
 Se preferir, você pode chamar o binário Python diretamente:
 
 ```toml
 [mcp_servers.postgres]
-command = "/home/rferro/mcp/.venv/bin/python"
+command = "/caminho/para/o/projeto/.venv/bin/python"
 args = ["-m", "postgres_mcp_server.server"]
 ```
 
@@ -153,7 +153,7 @@ Ou registrar via Docker:
 ```toml
 [mcp_servers.postgres]
 command = "docker"
-args = ["run", "--rm", "-i", "--env-file", "/home/rferro/mcp/.env", "postgres-mcp-tool"]
+args = ["run", "--rm", "-i", "--env-file", ".env", "postgres-mcp-tool"]
 ```
 
 Se o cliente aceitar MCP remoto via HTTP, use `http://localhost:3005/mcp`.
@@ -175,8 +175,8 @@ O VS Code usa o arquivo `.vscode/mcp.json` no workspace. Este projeto já inclui
 
 Para funcionar no VS Code:
 
-1. Suba o servidor com `docker compose -f /home/rferro/mcp/docker-compose.yml up --build -d`
-2. Abra a pasta `/home/rferro/mcp` no VS Code
+1. Suba o servidor com `docker compose -f docker-compose.yml up --build -d`
+2. Abra a pasta do projeto no VS Code
 3. Rode `MCP: List Servers` na Command Palette e confirme o trust do servidor
 
 ## Fluxo recomendado
