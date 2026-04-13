@@ -23,7 +23,7 @@ Servidor MCP em Python para expor consultas seguras de leitura ao PostgreSQL com
 - Acesso ao banco Postgres
 - Cliente MCP compatível, como Codex/Copilot com suporte a MCP
 
-## Configuração
+## Configuração do Servidor
 
 Crie um ambiente virtual e instale as dependências:
 
@@ -33,10 +33,9 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-O projeto já inclui um arquivo `.env` base na raiz. Ajuste os valores conforme seu banco:
+O projeto já inclui um arquivo `.env` base na raiz. Ajuste os valores do servidor conforme necessário:
 
 ```bash
-DATABASE_URL='postgresql://usuario:senha@host:5432/seu_banco'
 PG_SCHEMA='public'
 PG_MAX_ROWS='200'
 PG_STATEMENT_TIMEOUT_MS='10000'
@@ -54,6 +53,40 @@ O servidor carrega automaticamente esse `.env`. Se você também definir variáv
 - modo dinâmico: o servidor sobe sem `DATABASE_URL` e o cliente cria sessões temporárias por token
 
 Na inicialização, a `main` valida a conexão com o banco antes de expor o MCP somente quando `DATABASE_URL` estiver configurado. Se o servidor estiver em modo dinâmico, ele sobe sem validar banco no startup.
+
+## Configuração do Cliente
+
+O cliente não deve mais buscar credenciais em `.env`. O fluxo recomendado é ler um arquivo `mcp-config.json` na raiz do projeto que está sendo usado pelo chat.
+
+Estrutura esperada:
+
+```json
+{
+  "databases": [
+    {
+      "name": "financeiro",
+      "database_url": "postgresql://usuario:senha@host:5432/financeiro_db",
+      "description": "Banco financeiro com contas a pagar, faturamento e fluxo de caixa."
+    },
+    {
+      "name": "crm",
+      "database_url": "postgresql://usuario:senha@host:5432/crm_db",
+      "description": "Banco de CRM com clientes, leads, interações e histórico comercial."
+    }
+  ]
+}
+```
+
+O projeto inclui um exemplo em [mcp-config.example.json](/home/rferro/mcp/mcp-config.example.json).
+
+Regras de uso para o chat:
+
+1. ler `mcp-config.json` na raiz do projeto atual
+2. identificar quais bancos estão disponíveis em `databases`
+3. usar o campo `description` para inferir qual banco faz mais sentido para a pergunta do usuário
+4. chamar `create_session` com a `database_url` do banco escolhido
+5. guardar o `session_token` retornado em memória e reutilizar nas próximas tools
+6. se a pergunta envolver mais de um domínio, criar mais de uma sessão e consultar múltiplos bancos
 
 ## Executar localmente
 
@@ -157,7 +190,7 @@ Exemplo de criação de sessão:
 
 ```json
 {
-  "database_url": "postgresql://usuario:senha@host:5432/seu_banco",
+  "database_url": "postgresql://usuario:senha@host:5432/financeiro_db",
   "schema": "public",
   "statement_timeout_ms": 5000,
   "max_rows": 100,
@@ -204,10 +237,11 @@ O servidor pode manter várias sessões ao mesmo tempo. Exemplo:
 
 Para consultar mais de um banco na mesma conversa:
 
-1. crie uma sessão para cada banco com `create_session`
-2. mantenha os tokens em memória no cliente
-3. envie o token correto em cada tool call
-4. para comparar dados entre bancos, faça duas chamadas separadas e consolide o resultado no cliente
+1. leia `mcp-config.json`
+2. crie uma sessão para cada banco necessário com `create_session`
+3. mantenha os tokens em memória no cliente
+4. envie o token correto em cada tool call
+5. para comparar dados entre bancos, faça duas chamadas separadas e consolide o resultado no cliente
 
 As tools de leitura aceitam `session_token`:
 
@@ -234,6 +268,7 @@ As tools de leitura aceitam `session_token`:
 - As sessões ficam em memória do processo. Se o servidor reiniciar, os tokens são perdidos.
 - O token evita reenviar a senha a cada chamada, mas a credencial original ainda trafega em `create_session`. Trate essa operação como sensível.
 - Para produção, o modelo mais seguro continua sendo trocar login por um token emitido pelo seu backend, em vez de expor `database_url` diretamente ao MCP.
+- O arquivo `mcp-config.json` contém credenciais de banco e deve ser tratado como sensível. Não publique esse arquivo em repositórios públicos.
 
 ## Próximo passo
 

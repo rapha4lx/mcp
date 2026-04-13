@@ -1,0 +1,14 @@
+{
+  "databases": [
+    {
+      "name": "financeiro",
+      "database_url": "postgresql://usuario:senha@host:5432/financeiro_db",
+      "description": "Banco financeiro com contas a pagar, contas a receber, faturamento, fluxo de caixa e conciliação."
+    },
+    {
+      "name": "crm",
+      "database_url": "postgresql://usuario:senha@host:5432/crm_db",
+      "description": "Banco de CRM com clientes, leads, funil comercial, interações e histórico de atendimento."
+    }
+  ]
+}

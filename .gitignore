@@ -1,5 +1,6 @@
 /.codex
 /.env
+/mcp-config.json
 /.github
 /.venv
 /.vscode
