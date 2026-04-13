@@ -7,10 +7,14 @@ services:
     restart: on-failure
     stdin_open: true
     tty: false
-    env_file:
-      - ./.env
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER}
+      PG_SCHEMA: ${PG_SCHEMA:-public}
+      PG_MAX_ROWS: ${PG_MAX_ROWS:-200}
+      PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-10000}
+      PG_SESSION_TTL_HOURS: ${PG_SESSION_TTL_HOURS:-24}
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-streamable-http}
+      MCP_HOST: ${MCP_HOST:-0.0.0.0}
+      MCP_PORT: ${MCP_PORT:-3005}
       PYTHONPATH: /app/src
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -21,7 +25,6 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
-      - ./.env:/app/.env:ro
 
 networks:
   mcp-shared-net:

@@ -4,6 +4,9 @@ Servidor MCP em Python para expor consultas seguras de leitura ao PostgreSQL com
 
 ## O que ele expõe
 
+- `create_session`: valida um banco, cria um token temporário e guarda a conexão por 1 dia
+- `list_sessions`: lista tokens ativos em memória
+- `revoke_session`: revoga um token manualmente
 - `list_tables`: lista tabelas e views de um schema
 - `list_views`: lista views de um schema
 - `list_functions`: lista functions de um schema
@@ -37,6 +40,7 @@ DATABASE_URL='postgresql://usuario:senha@host:5432/seu_banco'
 PG_SCHEMA='public'
 PG_MAX_ROWS='200'
 PG_STATEMENT_TIMEOUT_MS='10000'
+PG_SESSION_TTL_HOURS='24'
 MCP_TRANSPORT='streamable-http'
 MCP_HOST='0.0.0.0'
 MCP_PORT='3005'
@@ -44,8 +48,12 @@ MCP_PORT='3005'
 
 O servidor carrega automaticamente esse `.env`. Se você também definir variáveis no ambiente do processo, elas continuam valendo como override.
 
-Na inicialização, a `main` valida a conexão com o banco antes de expor o MCP. Se o Postgres não estiver acessível, o processo encerra com erro imediatamente.
-Se ocorrer falha durante a execução do MCP, o processo também encerra com código de erro para o Docker Compose poder reiniciar o container.
+`DATABASE_URL` é opcional. O projeto suporta dois modos:
+
+- modo fixo: `DATABASE_URL` fica no ambiente do servidor e todas as requisições usam essa conexão
+- modo dinâmico: o servidor sobe sem `DATABASE_URL` e o cliente cria sessões temporárias por token
+
+Na inicialização, a `main` valida a conexão com o banco antes de expor o MCP somente quando `DATABASE_URL` estiver configurado. Se o servidor estiver em modo dinâmico, ele sobe sem validar banco no startup.
 
 ## Executar localmente
 
@@ -88,53 +96,7 @@ Para subir o serviço na porta `3005`:
 docker compose -f /home/rferro/mcp/docker-compose.yml up --build -d
 ```
 
-Antes do primeiro `up`, crie a rede externa compartilhada:
-
-```bash
-docker network create mcp-shared-net
-```
-
-O `docker-compose.yml` atual sobe apenas o MCP e conecta o container na rede externa `mcp-shared-net`.
-
-- `DATABASE_URL` continua sendo usado para execução local fora do Docker
-- `DATABASE_URL_DOCKER` é usado pelo Compose e aponta para `host.docker.internal:5432`
-- o endpoint MCP continua em `http://localhost:3005/mcp`
-- o serviço usa `restart: on-failure`, então reinicia automaticamente se o processo do MCP encerrar com erro
-
-Dentro do Compose, o MCP se conecta ao banco usando `host.docker.internal`, mapeado para o host Docker com `extra_hosts`. Isso evita o problema de `localhost` dentro do container apontar para o próprio container do MCP.
-
-Se você quiser manter comunicação por rede compartilhada entre os dois projetos, ainda pode conectar os dois na mesma rede externa. Mas, como o Postgres já está publicado em `5432`, isso deixa de ser obrigatório.
-
-Exemplo opcional no outro `docker-compose.yml`:
-
-```yaml
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: promo_db
-      POSTGRES_USER: promo_user
-      POSTGRES_PASSWORD: promo_password
-    networks:
-      mcp-shared-net:
-        aliases:
-          - postgres-db
-
-networks:
-  mcp-shared-net:
-    name: mcp-shared-net
-    external: true
-```
-
-No `docker-compose.yml`, o código do servidor é montado por volume a partir de `./src`. Isso evita rebuild da imagem a cada alteração no MCP. Você só precisa rebuildar quando mudar dependências do Python ou a base da imagem.
-
-Nesse compose, o arquivo `.env` é:
-
-- carregado como variáveis de ambiente com `env_file`
-- montado dentro do container em `/app/.env`
-- o código em `src/` é montado dentro do container e executado com `PYTHONPATH=/app/src`
-
-Com a configuração atual, o endpoint MCP HTTP fica em `http://localhost:3005/mcp`.
+O `docker-compose.yml` agora sobe o MCP em modo dinâmico por padrão, sem injetar `DATABASE_URL` no container. Isso evita falha no startup quando a conexão fixa não está disponível e deixa o fluxo centrado em `create_session`.
 
 ## Registrar no cliente MCP
 
@@ -184,34 +146,94 @@ Para funcionar no VS Code:
 2. Abra a pasta `/home/rferro/mcp` no VS Code
 3. Rode `MCP: List Servers` na Command Palette e confirme o trust do servidor
 
-Se o VS Code não detectar automaticamente, abra `MCP: Open Workspace Folder MCP Configuration` e verifique o arquivo [mcp.json](/home/rferro/mcp/.vscode/mcp.json).
+## Fluxo recomendado
 
-## Uso esperado pelos agentes
+1. Chame `create_session` com `database_url` do banco desejado.
+2. Guarde o `session.token` retornado.
+3. Use `session_token` nas chamadas de metadata e query.
+4. Se precisar trocar de banco, crie outra sessão com outro token.
 
-Fluxo recomendado:
-
-1. Chamar `list_tables` para descobrir a estrutura disponível.
-2. Chamar `describe_table` para entender as colunas.
-3. Chamar `query` com SQL somente leitura e parâmetros em JSON.
-
-Exemplo:
+Exemplo de criação de sessão:
 
 ```json
 {
+  "database_url": "postgresql://usuario:senha@host:5432/seu_banco",
+  "schema": "public",
+  "statement_timeout_ms": 5000,
+  "max_rows": 100,
+  "label": "financeiro"
+}
+```
+
+Resposta esperada:
+
+```json
+{
+  "ok": true,
+  "session": {
+    "token": "abc123",
+    "label": "financeiro",
+    "schema": "public",
+    "statement_timeout_ms": 5000,
+    "max_rows": 100,
+    "created_at": "2026-04-13T18:00:00+00:00",
+    "expires_at": "2026-04-14T18:00:00+00:00"
+  },
+  "database_name": "promo_db",
+  "current_user": "promo_user"
+}
+```
+
+Exemplo de query:
+
+```json
+{
+  "session_token": "abc123",
   "sql": "select id, email from customers where created_at >= %s order by created_at desc",
   "params_json": "[\"2026-01-01\"]",
   "max_rows": 50
 }
 ```
 
+## Múltiplos bancos
+
+O servidor pode manter várias sessões ao mesmo tempo. Exemplo:
+
+- token `financeiro` apontando para o banco A
+- token `crm` apontando para o banco B
+
+Para consultar mais de um banco na mesma conversa:
+
+1. crie uma sessão para cada banco com `create_session`
+2. mantenha os tokens em memória no cliente
+3. envie o token correto em cada tool call
+4. para comparar dados entre bancos, faça duas chamadas separadas e consolide o resultado no cliente
+
+As tools de leitura aceitam `session_token`:
+
+- `list_tables`
+- `list_views`
+- `list_functions`
+- `list_referenced_tables`
+- `list_referencing_tables`
+- `list_related_tables`
+- `list_related_tables_detailed`
+- `describe_table`
+- `query`
+
+`database_url` deve ser usado apenas em `create_session`. Depois disso, o fluxo correto é usar `session_token` nas demais tools.
+
 ## Limitações e segurança
 
 - O servidor rejeita comandos que não sejam de leitura.
 - Apenas uma instrução SQL por chamada é aceita.
 - A conexão é aberta com transação read-only.
-- `statement_timeout` é configurado por ambiente.
+- `statement_timeout` e `max_rows` ficam associados à sessão.
 - O resultado é truncado no limite de linhas configurado.
 - Em caso de erro em uma tool, a resposta retorna `ok: false` com `error` e `error_type` para o requisitante.
+- As sessões ficam em memória do processo. Se o servidor reiniciar, os tokens são perdidos.
+- O token evita reenviar a senha a cada chamada, mas a credencial original ainda trafega em `create_session`. Trate essa operação como sensível.
+- Para produção, o modelo mais seguro continua sendo trocar login por um token emitido pelo seu backend, em vez de expor `database_url` diretamente ao MCP.
 
 ## Próximo passo
 
