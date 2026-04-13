@@ -4,6 +4,7 @@ services:
       context: .
     image: postgres-mcp-tool
     command: ["python", "-m", "postgres_mcp_server.server"]
+    restart: on-failure
     stdin_open: true
     tty: false
     env_file:

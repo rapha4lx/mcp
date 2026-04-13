@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any
 
 import psycopg
@@ -66,6 +67,26 @@ def _connect() -> psycopg.Connection:
     conn.execute("SET default_transaction_read_only = on")
     conn.execute(f"SET statement_timeout = '{SETTINGS.statement_timeout_ms}ms'")
     return conn
+
+
+def _tool_error_payload(exc: Exception) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": str(exc),
+        "error_type": type(exc).__name__,
+    }
+
+
+def _safe_tool(fn):
+    @wraps(fn)
+    def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            print(f"Tool request failed in {fn.__name__}: {exc}", file=sys.stderr)
+            return _tool_error_payload(exc)
+
+    return wrapped
 
 
 def _verify_database_connection() -> None:
@@ -208,6 +229,7 @@ def _fetch_related_table_names(
 
 
 @mcp.tool()
+@_safe_tool
 def list_tables(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List base tables and views visible in a schema."""
     sql = """
@@ -227,6 +249,7 @@ def list_tables(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_safe_tool
 def list_views(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List views visible in a schema."""
     sql = """
@@ -245,6 +268,7 @@ def list_views(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_safe_tool
 def list_functions(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List functions visible in a schema."""
     sql = """
@@ -267,6 +291,7 @@ def list_functions(schema: str = SETTINGS.default_schema) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_safe_tool
 def list_referenced_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List tables referenced by foreign keys from a given table."""
     schema_name, table_name = _qualified_name(schema, table)
@@ -281,6 +306,7 @@ def list_referenced_tables(table: str, schema: str = SETTINGS.default_schema) ->
 
 
 @mcp.tool()
+@_safe_tool
 def list_referencing_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List tables that reference a given table by foreign keys."""
     schema_name, table_name = _qualified_name(schema, table)
@@ -295,6 +321,7 @@ def list_referencing_tables(table: str, schema: str = SETTINGS.default_schema) -
 
 
 @mcp.tool()
+@_safe_tool
 def list_related_tables(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List related table names for a given table."""
     schema_name, table_name = _qualified_name(schema, table)
@@ -312,6 +339,7 @@ def list_related_tables(table: str, schema: str = SETTINGS.default_schema) -> di
 
 
 @mcp.tool()
+@_safe_tool
 def list_related_tables_detailed(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """List related tables with columns and constraints for a given table."""
     schema_name, table_name = _qualified_name(schema, table)
@@ -329,6 +357,7 @@ def list_related_tables_detailed(table: str, schema: str = SETTINGS.default_sche
 
 
 @mcp.tool()
+@_safe_tool
 def describe_table(table: str, schema: str = SETTINGS.default_schema) -> dict[str, Any]:
     """Describe columns for a table or view."""
     schema_name, table_name = _qualified_name(schema, table)
@@ -356,6 +385,7 @@ def describe_table(table: str, schema: str = SETTINGS.default_schema) -> dict[st
 
 
 @mcp.tool()
+@_safe_tool
 def query(sql: str, params_json: str | None = None, max_rows: int | None = None) -> dict[str, Any]:
     """Run a read-only SQL query against Postgres."""
     safe_sql = _validate_read_only_sql(sql)
@@ -384,7 +414,11 @@ def main() -> None:
         print(f"Database connection failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    mcp.run(transport=transport)
+    try:
+        mcp.run(transport=transport)
+    except Exception as exc:
+        print(f"MCP server failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

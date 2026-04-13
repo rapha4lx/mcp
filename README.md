@@ -45,6 +45,7 @@ MCP_PORT='3005'
 O servidor carrega automaticamente esse `.env`. Se você também definir variáveis no ambiente do processo, elas continuam valendo como override.
 
 Na inicialização, a `main` valida a conexão com o banco antes de expor o MCP. Se o Postgres não estiver acessível, o processo encerra com erro imediatamente.
+Se ocorrer falha durante a execução do MCP, o processo também encerra com código de erro para o Docker Compose poder reiniciar o container.
 
 ## Executar localmente
 
@@ -98,6 +99,7 @@ O `docker-compose.yml` atual sobe apenas o MCP e conecta o container na rede ext
 - `DATABASE_URL` continua sendo usado para execução local fora do Docker
 - `DATABASE_URL_DOCKER` é usado pelo Compose e aponta para `host.docker.internal:5432`
 - o endpoint MCP continua em `http://localhost:3005/mcp`
+- o serviço usa `restart: on-failure`, então reinicia automaticamente se o processo do MCP encerrar com erro
 
 Dentro do Compose, o MCP se conecta ao banco usando `host.docker.internal`, mapeado para o host Docker com `extra_hosts`. Isso evita o problema de `localhost` dentro do container apontar para o próprio container do MCP.
 
@@ -209,6 +211,7 @@ Exemplo:
 - A conexão é aberta com transação read-only.
 - `statement_timeout` é configurado por ambiente.
 - O resultado é truncado no limite de linhas configurado.
+- Em caso de erro em uma tool, a resposta retorna `ok: false` com `error` e `error_type` para o requisitante.
 
 ## Próximo passo
 
