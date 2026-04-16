@@ -197,6 +197,11 @@ def _resolve_request_context(
     if not resolved_database_url:
         raise ValueError("A database_url (during create_session) or session_token is strictly required.")
 
+    if resolved_database_url.startswith("postgres://"):
+        resolved_database_url = resolved_database_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif resolved_database_url.startswith("postgresql://"):
+        resolved_database_url = resolved_database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
     resolved_schema = (
         schema or (session_entry.schema if session_entry else None) or SETTINGS.default_schema
     ).strip()
@@ -251,19 +256,16 @@ def _safe_tool(fn):
 def _validate_database_connection(context: RequestContext) -> dict[str, Any]:
     database_name = "unknown"
     current_user = "unknown"
-    try:
-        with _connect(context) as conn:
-            engine = _get_engine(context)
-            if "postgres" in engine.name:
-                res = conn.exec_driver_sql("select current_database(), current_user").fetchone()
-                if res:
-                    database_name, current_user = res
-            elif "mysql" in engine.name:
-                res = conn.exec_driver_sql("select database(), current_user()").fetchone()
-                if res:
-                    database_name, current_user = res
-    except Exception:
-        pass
+    with _connect(context) as conn:
+        engine = _get_engine(context)
+        if "postgres" in engine.name:
+            res = conn.exec_driver_sql("select current_database(), current_user").fetchone()
+            if res:
+                database_name, current_user = res
+        elif "mysql" in engine.name:
+            res = conn.exec_driver_sql("select database(), current_user()").fetchone()
+            if res:
+                database_name, current_user = res
 
     return {
         "database_name": database_name,
