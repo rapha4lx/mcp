@@ -4,8 +4,8 @@ Servidor MCP em Python para expor consultas seguras de leitura a bancos de dados
 
 ## O que ele expõe
 
-- `create_session`: valida um banco, cria um token temporário e guarda a conexão por 1 dia
-- `list_sessions`: lista tokens ativos em memória
+- `create_session`: cria uma token configurando a URI do banco dinamicamente bem como definindo as flags de permissões (`allow_read`, `allow_insert`, etc) desejadas.
+- `list_sessions`: lista tokens ativos em memória e suas capacidades.
 - `revoke_session`: revoga um token manualmente
 - `list_tables`: lista tabelas e views de um schema
 - `list_views`: lista views de um schema
@@ -15,13 +15,7 @@ Servidor MCP em Python para expor consultas seguras de leitura a bancos de dados
 - `list_related_tables`: versão rápida, só com nomes das tabelas relacionadas
 - `list_related_tables_detailed`: versão detalhada, com colunas e constraints
 - `describe_table`: descreve colunas de uma tabela/view
-- `query`: executa apenas `SELECT`, `WITH` e `SHOW`
-
-## Requisitos
-
-- Python 3.11+
-- Acesso a banco(s) SQL (Drivers nativos, como `psycopg` para Postgres ou `pymysql` para MySQL, são baixados automaticamente em runtime!)
-- Cliente MCP compatível, como Codex/Copilot com suporte a MCP
+- `query`: executa queries genéricas (SELECT, INSERT, UPDATE, etc). Sua execução dependerá estritamente das flags preenchidas durante o `create_session`.
 
 ## Configuração do Servidor
 
@@ -47,12 +41,7 @@ MCP_PORT='3005'
 
 O servidor carrega automaticamente esse `.env`. Se você também definir variáveis no ambiente do processo, elas continuam valendo como override.
 
-`DATABASE_URL` é opcional. O projeto suporta dois modos:
-
-- modo fixo: `DATABASE_URL` fica no ambiente do servidor e todas as requisições usam essa conexão
-- modo dinâmico: o servidor sobe sem `DATABASE_URL` e o cliente cria sessões temporárias por token
-
-Na inicialização, a `main` valida a conexão com o banco antes de expor o MCP somente quando `DATABASE_URL` estiver configurado. Se o servidor estiver em modo dinâmico, ele sobe sem validar banco no startup.
+Todo o fluxo agora é 100% focado no modo dinâmico associado aos seus IAs! Não existe mais uma URL de banco salva no `.env` global, tudo é informado e validado por eles através de sessões (Tokens).
 
 ## Configuração do Cliente
 
@@ -129,7 +118,7 @@ Para subir o serviço na porta `3005`:
 docker compose -f docker-compose.yml up --build -d
 ```
 
-O `docker-compose.yml` agora sobe o MCP em modo dinâmico por padrão, sem injetar `DATABASE_URL` no container. Isso evita falha no startup quando a conexão fixa não está disponível e deixa o fluxo centrado em `create_session`.
+O `docker-compose.yml` sobe o MCP de modo limpo. O fluxo inteiro passa a depender de comandos `create_session` dinâmicos disparados pelos agentes.
 
 ## Registrar no cliente MCP
 
@@ -194,7 +183,13 @@ Exemplo de criação de sessão:
   "schema": "public",
   "statement_timeout_ms": 5000,
   "max_rows": 100,
-  "label": "financeiro"
+  "label": "financeiro",
+  "allow_read": true,
+  "allow_insert": true,
+  "allow_update": false,
+  "allow_delete": false,
+  "allow_create": false,
+  "allow_drop": false
 }
 ```
 
@@ -259,17 +254,12 @@ As tools de leitura aceitam `session_token`:
 
 ## Limitações e segurança
 
-- O servidor rejeita comandos que não sejam de leitura.
-- Apenas uma instrução SQL por chamada é aceita.
-- A conexão é aberta com transação read-only.
-- `statement_timeout` e `max_rows` ficam associados à sessão.
+- O modelo agora tem recursos de controle de acesso (RBAC). Um token de sessão herda os booleans definidos durante a invocação da tool `create_session` (ex: `allow_delete`).
+- Por padrão as Flags de modificação e DDL sempre começam como `false`, exigindo passe explícito.
+- Se o LLM alucinar uma exclusão, ele só funcionará se o script Python tiver criado a sessão com essa flag. Ele lança rejections instantâneas sem bater no banco caso violadas.
 - O resultado é truncado no limite de linhas configurado.
 - Em caso de erro em uma tool, a resposta retorna `ok: false` com `error` e `error_type` para o requisitante.
 - As sessões ficam em memória do processo. Se o servidor reiniciar, os tokens são perdidos.
-- O token evita reenviar a senha a cada chamada, mas a credencial original ainda trafega em `create_session`. Trate essa operação como sensível.
-- Para produção, o modelo mais seguro continua sendo trocar login por um token emitido pelo seu backend, em vez de expor `database_url` diretamente ao MCP.
-- O arquivo `mcp-config.json` contém credenciais de banco e deve ser tratado como sensível. Não publique esse arquivo em repositórios públicos.
 
-## Próximo passo
-
-Se você quiser expor operações de escrita, faça isso em tools separadas, com validações explícitas por ação, e nunca via SQL arbitrário.
+> [!CAUTION]
+> Dando os comandos ao LLM e o acesso a flags `allow_delete` ou `allow_drop`, ele pode de fato resetar infraestruturas inteiras no provedor em caso de problemas não supervisionados. Esteja ciente ao permitir conexões Master ou conceder essas flags globais que alteram o escopo.

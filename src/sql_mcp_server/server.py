@@ -19,22 +19,6 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-READ_ONLY_PREFIXES = ("select", "with", "show")
-FORBIDDEN_SQL_PATTERNS = (
-    r"\binsert\b",
-    r"\bupdate\b",
-    r"\bdelete\b",
-    r"\bdrop\b",
-    r"\balter\b",
-    r"\btruncate\b",
-    r"\bcreate\b",
-    r"\bgrant\b",
-    r"\brevoke\b",
-    r"\bcopy\b",
-    r"\bcall\b",
-    r"\bdo\b",
-)
-
 DRIVER_MAP = {
     "postgresql": "psycopg[binary]",
     "postgres": "psycopg[binary]",
@@ -47,7 +31,6 @@ DRIVER_MAP = {
 
 @dataclass(frozen=True)
 class Settings:
-    database_url: str | None
     default_schema: str
     statement_timeout_ms: int
     max_rows: int
@@ -59,6 +42,7 @@ class RequestContext:
     schema: str
     statement_timeout_ms: int
     max_rows: int
+    permissions: dict[str, bool]
 
 @dataclass(frozen=True)
 class SessionEntry:
@@ -68,6 +52,7 @@ class SessionEntry:
     schema: str
     statement_timeout_ms: int
     max_rows: int
+    permissions: dict[str, bool]
     created_at: datetime
     expires_at: datetime
 
@@ -78,6 +63,7 @@ class SessionEntry:
             "schema": self.schema,
             "statement_timeout_ms": self.statement_timeout_ms,
             "max_rows": self.max_rows,
+            "permissions": self.permissions,
             "created_at": self.created_at.isoformat(),
             "expires_at": self.expires_at.isoformat(),
         }
@@ -99,6 +85,7 @@ class SessionStore:
             schema=context.schema,
             statement_timeout_ms=context.statement_timeout_ms,
             max_rows=context.max_rows,
+            permissions=context.permissions,
             created_at=now,
             expires_at=now + self._ttl,
         )
@@ -143,7 +130,6 @@ class SessionStore:
 def load_settings() -> Settings:
     load_dotenv()
     return Settings(
-        database_url=os.environ.get("DATABASE_URL"),
         default_schema=os.environ.get("PG_SCHEMA", "public"),
         statement_timeout_ms=int(os.environ.get("PG_STATEMENT_TIMEOUT_MS", "10000")),
         max_rows=int(os.environ.get("PG_MAX_ROWS", "200")),
@@ -203,18 +189,13 @@ def _resolve_request_context(
     schema: str | None = None,
     statement_timeout_ms: int | None = None,
     max_rows: int | None = None,
+    fallback_permissions: dict[str, bool] | None = None,
 ) -> RequestContext:
     session_entry = SESSION_STORE.get(session_token) if session_token else None
-    resolved_database_url = (
-        database_url
-        or (session_entry.database_url if session_entry else None)
-        or SETTINGS.database_url
-        or ""
-    ).strip()
+    
+    resolved_database_url = (database_url or (session_entry.database_url if session_entry else None) or "").strip()
     if not resolved_database_url:
-        raise ValueError(
-            "session_token or database_url is required when DATABASE_URL is not configured in the environment."
-        )
+        raise ValueError("A database_url (during create_session) or session_token is strictly required.")
 
     resolved_schema = (
         schema or (session_entry.schema if session_entry else None) or SETTINGS.default_schema
@@ -236,11 +217,14 @@ def _resolve_request_context(
     if resolved_max_rows <= 0:
         raise ValueError("max_rows must be greater than zero.")
 
+    resolved_permissions = session_entry.permissions if session_entry else (fallback_permissions or {})
+
     return RequestContext(
         database_url=resolved_database_url,
         schema=resolved_schema,
         statement_timeout_ms=resolved_timeout,
         max_rows=resolved_max_rows,
+        permissions=resolved_permissions,
     )
 
 
@@ -287,17 +271,6 @@ def _validate_database_connection(context: RequestContext) -> dict[str, Any]:
     }
 
 
-def _verify_database_connection() -> None:
-    context = _resolve_request_context()
-    connection_info = _validate_database_connection(context)
-    print(
-        "Database connection OK: "
-        f"database={connection_info['database_name']} "
-        f"user={connection_info['current_user']}",
-        file=sys.stderr,
-    )
-
-
 def _normalize_sql(sql: str) -> str:
     normalized = sql.strip()
     if not normalized:
@@ -307,16 +280,27 @@ def _normalize_sql(sql: str) -> str:
     return normalized[:-1].strip() if normalized.endswith(";") else normalized
 
 
-def _validate_read_only_sql(sql: str) -> str:
+def _validate_sql_permissions(sql: str, permissions: dict[str, bool]) -> str:
     normalized = _normalize_sql(sql)
     lowered = normalized.lower()
 
-    if not lowered.startswith(READ_ONLY_PREFIXES):
-        raise ValueError("Only read-only SELECT, WITH, or SHOW statements are allowed.")
+    if re.search(r"\binsert\b", lowered) and not permissions.get("allow_insert"):
+        raise ValueError("Query rejected: 'allow_insert' permission is required for INSERT operations.")
 
-    for pattern in FORBIDDEN_SQL_PATTERNS:
-        if re.search(pattern, lowered):
-            raise ValueError("Query contains non-read-only SQL and was rejected.")
+    if re.search(r"\bupdate\b", lowered) and not permissions.get("allow_update"):
+        raise ValueError("Query rejected: 'allow_update' permission is required for UPDATE operations.")
+
+    if re.search(r"\bdelete\b", lowered) and not permissions.get("allow_delete"):
+        raise ValueError("Query rejected: 'allow_delete' permission is required for DELETE operations.")
+
+    if re.search(r"\bcreate\b", lowered) and not permissions.get("allow_create"):
+        raise ValueError("Query rejected: 'allow_create' permission is required for CREATE operations.")
+
+    if re.search(r"\b(?:drop|alter|truncate)\b", lowered) and not permissions.get("allow_drop"):
+        raise ValueError("Query rejected: 'allow_drop' permission is required for DROP/ALTER/TRUNCATE operations.")
+
+    if not permissions.get("allow_read") and re.search(r"\b(?:select|show|with)\b", lowered):
+        raise ValueError("Query rejected: 'allow_read' permission is required for SELECT/SHOW/WITH operations.")
 
     return normalized
 
@@ -352,14 +336,31 @@ def create_session(
     statement_timeout_ms: int | None = None,
     max_rows: int | None = None,
     label: str | None = None,
+    allow_read: bool = True,
+    allow_insert: bool = False,
+    allow_update: bool = False,
+    allow_delete: bool = False,
+    allow_create: bool = False,
+    allow_drop: bool = False,
 ) -> dict[str, Any]:
-    """Create a temporary session token for a database connection."""
+    """Create a temporary session token for a database connection with granular permissions."""
+    permissions = {
+        "allow_read": allow_read,
+        "allow_insert": allow_insert,
+        "allow_update": allow_update,
+        "allow_delete": allow_delete,
+        "allow_create": allow_create,
+        "allow_drop": allow_drop,
+    }
+
     context = _resolve_request_context(
         database_url=database_url,
         schema=schema,
         statement_timeout_ms=statement_timeout_ms,
         max_rows=max_rows,
+        fallback_permissions=permissions,
     )
+    
     connection_info = _validate_database_connection(context)
     session = SESSION_STORE.create(context, label=label)
     return {
@@ -384,6 +385,14 @@ def revoke_session(session_token: str) -> dict[str, Any]:
     """Revoke an active temporary session token."""
     revoked = SESSION_STORE.revoke(session_token)
     return {"ok": revoked, "revoked": revoked}
+
+
+@mcp.tool()
+@_safe_tool
+def get_session_info(session_token: str) -> dict[str, Any]:
+    """Check the details and active permissions of a specific session token."""
+    session = SESSION_STORE.get(session_token)
+    return {"ok": True, "session": session.to_public_payload()}
 
 
 @mcp.tool()
@@ -559,7 +568,6 @@ def list_related_tables(
     referenced = list_referenced_tables(table, schema, session_token)
     referencing = list_referencing_tables(table, schema, session_token)
     
-    # Extract just the schema+table maps
     referenced_rows = [{"relation_direction": "outgoing", "related_table_schema": r["related_table_schema"], "related_table_name": r["related_table_name"]} for r in referenced.get("referenced_tables", [])]
     referencing_rows = [{"relation_direction": "incoming", "related_table_schema": r["table_schema"], "related_table_name": r["table_name"]} for r in referencing.get("referencing_tables", [])]
     
@@ -645,28 +653,30 @@ def query(
     schema: str | None = None,
     statement_timeout_ms: int | None = None,
 ) -> dict[str, Any]:
-    """Run a read-only SQL query against the database."""
-    safe_sql = _validate_read_only_sql(sql)
-    params = _parse_params(params_json)
+    """Run an SQL query against the database, respecting the session's active permissions."""
     context = _resolve_request_context(
         session_token=session_token,
         schema=schema,
         statement_timeout_ms=statement_timeout_ms,
         max_rows=max_rows,
     )
+    safe_sql = _validate_sql_permissions(sql, context.permissions)
+    params = _parse_params(params_json)
+    
     row_limit = min(max_rows or context.max_rows, context.max_rows)
 
     with _connect(context) as conn:
-        result = conn.exec_driver_sql(safe_sql, tuple(params) if params else None)
-        column_names = list(result.keys()) if result.returns_rows else []
-        rows = []
-        if result.returns_rows:
-            fetched = result.fetchmany(row_limit)
-            rows = [tuple(r) for r in fetched]
+        with conn.begin(): # Use explicit transaction so writings are auto-committed.
+            result = conn.exec_driver_sql(safe_sql, tuple(params) if params else None)
+            column_names = list(result.keys()) if result.returns_rows else []
+            rows = []
+            if result.returns_rows:
+                fetched = result.fetchmany(row_limit)
+                rows = [tuple(r) for r in fetched]
 
     return {
-        "row_count": len(rows),
-        "truncated": len(rows) == row_limit,
+        "row_count": len(rows) if result.returns_rows else result.rowcount,
+        "truncated": len(rows) == row_limit if result.returns_rows else False,
         "max_rows": row_limit,
         "columns": column_names,
         "rows": rows,
@@ -675,17 +685,8 @@ def query(
 
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
-    if SETTINGS.database_url:
-        try:
-            _verify_database_connection()
-        except Exception as exc:
-            print(f"Database connection failed: {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-    else:
-        print(
-            "DATABASE_URL not configured at startup; waiting for create_session or per-request database_url.",
-            file=sys.stderr,
-        )
+
+    print("Subindo MCP em modo puramente dinâmico. Servidor aguardando requests com session_token válidos.", file=sys.stderr)
 
     try:
         mcp.run(transport=transport)

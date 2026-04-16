@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 EXPOSE 3005
 
-CMD ["postgres-mcp-tool"]
+CMD ["sql-mcp-server"]
