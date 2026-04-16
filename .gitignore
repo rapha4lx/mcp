@@ -6,3 +6,4 @@ __pycache__/
 /.github
 /.venv
 /.vscode
+src/sql_mcp_server/__init__.py

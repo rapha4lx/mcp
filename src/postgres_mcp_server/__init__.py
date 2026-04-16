@@ -1,1 +1,0 @@
-"""Postgres MCP server package."""

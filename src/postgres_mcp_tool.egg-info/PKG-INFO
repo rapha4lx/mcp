@@ -4,5 +4,4 @@ Version: 0.1.0
 Summary: MCP server to expose safe Postgres read tools to agent clients.
 Requires-Python: >=3.11
 Requires-Dist: mcp>=1.9.0
-Requires-Dist: psycopg[binary]>=3.1.19
 Requires-Dist: python-dotenv>=1.0.1
