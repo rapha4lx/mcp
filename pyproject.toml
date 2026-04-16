@@ -1,16 +1,16 @@
 [project]
-name = "postgres-mcp-tool"
+name = "sql-mcp-server"
 version = "0.1.0"
-description = "MCP server to expose safe Postgres read tools to agent clients."
+description = "MCP server to expose safe SQL databases read tools to agent clients."
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=1.9.0",
-  "psycopg[binary]>=3.1.19",
   "python-dotenv>=1.0.1",
+  "sqlalchemy>=2.0.0",
 ]
 
 [project.scripts]
-postgres-mcp-tool = "postgres_mcp_server.server:main"
+sql-mcp-server = "sql_mcp_server.server:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

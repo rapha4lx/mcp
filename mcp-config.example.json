@@ -7,8 +7,18 @@
     },
     {
       "name": "crm",
-      "database_url": "postgresql://usuario:senha@host:5432/crm_db",
+      "database_url": "mysql+pymysql://usuario:senha@host:3306/crm_db",
       "description": "Banco de CRM com clientes, leads, funil comercial, interações e histórico de atendimento."
+    },
+    {
+      "name": "logs",
+      "database_url": "sqlite:///local_logs.db",
+      "description": "Banco local SQLite contendo logs rápidos e configurações locais."
+    },
+    {
+      "name": "supabase",
+      "database_url": "postgresql://[USUARIO]:[SENHA]@aws-0-sa-east-1.pooler.supabase.com:6543/postgres",
+      "description": "Banco do Supabase. IMPORTANTE: Para o MCP não usamos as chaves VITE_SUPABASE. Acesse o painel do Supabase -> Settings -> Database -> Connection String -> URI."
     }
   ]
 }

@@ -1,6 +1,6 @@
-# Postgres MCP Tool
+# SQL MCP Server
 
-Servidor MCP em Python para expor consultas seguras de leitura ao PostgreSQL como tools para agentes.
+Servidor MCP em Python para expor consultas seguras de leitura a bancos de dados SQL (Postgres, MySQL, SQLite, etc.) como tools para agentes.
 
 ## O que ele expõe
 
@@ -20,7 +20,7 @@ Servidor MCP em Python para expor consultas seguras de leitura ao PostgreSQL com
 ## Requisitos
 
 - Python 3.11+
-- Acesso ao banco Postgres
+- Acesso a banco(s) SQL (Drivers nativos, como `psycopg` para Postgres ou `pymysql` para MySQL, são baixados automaticamente em runtime!)
 - Cliente MCP compatível, como Codex/Copilot com suporte a MCP
 
 ## Configuração do Servidor
@@ -70,7 +70,7 @@ Estrutura esperada:
     },
     {
       "name": "crm",
-      "database_url": "postgresql://usuario:senha@host:5432/crm_db",
+      "database_url": "mysql+pymysql://usuario:senha@host:3306/crm_db",
       "description": "Banco de CRM com clientes, leads, interações e histórico comercial."
     }
   ]
@@ -92,7 +92,7 @@ Regras de uso para o chat:
 
 ```bash
 source .venv/bin/activate
-postgres-mcp-tool
+sql-mcp-server
 ```
 
 ## Executar com Docker
@@ -100,19 +100,19 @@ postgres-mcp-tool
 Build da imagem:
 
 ```bash
-docker build -t postgres-mcp-tool .
+docker build -t sql-mcp-server .
 ```
 
 Execução usando o `.env` local:
 
 ```bash
-docker run --rm -i --env-file .env postgres-mcp-tool
+docker run --rm -i --env-file .env sql-mcp-server
 ```
 
 Publicando a porta `3005`:
 
 ```bash
-docker run --rm -i -p 3005:3005 --env-file .env postgres-mcp-tool
+docker run --rm -i -p 3005:3005 --env-file .env sql-mcp-server
 ```
 
 Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajuste o host do `DATABASE_URL` para um endereço acessível do container. Em Linux, normalmente isso significa usar o IP da máquina na rede Docker em vez de `localhost`.
@@ -120,7 +120,7 @@ Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajus
 Com Docker Compose:
 
 ```bash
-docker compose -f docker-compose.yml run --rm postgres-mcp-tool
+docker compose -f docker-compose.yml run --rm sql-mcp-server
 ```
 
 Para subir o serviço na porta `3005`:
@@ -136,24 +136,24 @@ O `docker-compose.yml` agora sobe o MCP em modo dinâmico por padrão, sem injet
 Exemplo de configuração em `config.toml`:
 
 ```toml
-[mcp_servers.postgres]
-command = "/caminho/para/o/projeto/.venv/bin/postgres-mcp-tool"
+[mcp_servers.sql_tools]
+command = "/caminho/para/o/projeto/.venv/bin/sql-mcp-server"
 ```
 
 Se preferir, você pode chamar o binário Python diretamente:
 
 ```toml
-[mcp_servers.postgres]
+[mcp_servers.sql_tools]
 command = "/caminho/para/o/projeto/.venv/bin/python"
-args = ["-m", "postgres_mcp_server.server"]
+args = ["-m", "sql_mcp_server.server"]
 ```
 
 Ou registrar via Docker:
 
 ```toml
-[mcp_servers.postgres]
+[mcp_servers.sql_tools]
 command = "docker"
-args = ["run", "--rm", "-i", "--env-file", ".env", "postgres-mcp-tool"]
+args = ["run", "--rm", "-i", "--env-file", ".env", "sql-mcp-server"]
 ```
 
 Se o cliente aceitar MCP remoto via HTTP, use `http://localhost:3005/mcp`.
@@ -165,7 +165,7 @@ O VS Code usa o arquivo `.vscode/mcp.json` no workspace. Este projeto já inclui
 ```json
 {
   "servers": {
-    "postgres": {
+    "sql_tools": {
       "type": "http",
       "url": "http://localhost:3005/mcp"
     }
