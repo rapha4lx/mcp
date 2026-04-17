@@ -1,8 +1,9 @@
 services:
-  postgres-mcp-tool:
+  sql-mcp-tool:
     build:
       context: .
-    image: postgres-mcp-tool
+    image: sql-mcp-tool
+    container_name: sql-mcp-tool
     command: ["python", "-m", "sql_mcp_server.server"]
     restart: on-failure
     stdin_open: true
