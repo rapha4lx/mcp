@@ -120,32 +120,80 @@ docker compose -f docker-compose.yml up --build -d
 
 O `docker-compose.yml` sobe o MCP de modo limpo. O fluxo inteiro passa a depender de comandos `create_session` dinâmicos disparados pelos agentes.
 
-## Registrar no cliente MCP
-
-Exemplo de configuração em `config.toml`:
-
-```toml
-[mcp_servers.sql_tools]
-command = "/caminho/para/o/projeto/.venv/bin/sql-mcp-server"
-```
-
-Se preferir, você pode chamar o binário Python diretamente:
-
-```toml
-[mcp_servers.sql_tools]
-command = "/caminho/para/o/projeto/.venv/bin/python"
-args = ["-m", "sql_mcp_server.server"]
-```
-
-Ou registrar via Docker:
-
-```toml
-[mcp_servers.sql_tools]
-command = "docker"
-args = ["run", "--rm", "-i", "--env-file", ".env", "sql-mcp-server"]
-```
-
 Se o cliente aceitar MCP remoto via HTTP, use `http://localhost:3005/mcp`.
+
+## Registrar no Cursor ou Antigravity
+
+Você pode conectar suas IDEs ao servidor de duas formas: via Python local ou via Docker.
+
+### 1. Conectar ao Container Docker em Execução (Recomendado)
+
+Se você já subiu o container com `docker compose up -d`, pode fazer com que todas as IDEs se conectem ao **mesmo container**. Isso permite que elas compartilhem o mesmo estado e sessões.
+
+#### No Cursor:
+1. Vá em **Settings** > **Cursor Settings** > **Features** > **MCP**.
+2. Clique em **+ Add New MCP Server**.
+3. **Name**: `SQL-Active`
+4. **Type**: `command`
+5. **Command**:
+   ```bash
+   docker exec -i sql-mcp-tool python -m sql_mcp_server.server
+   ```
+
+#### No Antigravity:
+Adicione no seu arquivo de configuração de servidores MCP:
+
+```json
+{
+  "mcpServers": {
+    "sql-shared": {
+      "command": "docker",
+      "args": ["exec", "-i", "sql-mcp-tool", "python", "-m", "sql_mcp_server.server"]
+    }
+  }
+}
+```
+
+### 2. Rodar via Interpretador Python Local
+
+Se preferir rodar fora do Docker:
+
+#### No Cursor:
+1. Vá em **Features** > **MCP** > **+ Add New MCP Server**.
+2. **Name**: `SQL-Local`
+3. **Type**: `command`
+4. **Command**:
+   ```bash
+   /caminho/absoluto/do/projeto/.venv/bin/python -m sql_mcp_server.server
+   ```
+
+#### No Antigravity (Local):
+```json
+{
+  "mcpServers": {
+    "sql-local": {
+      "command": "/caminho/para/seu/.venv/bin/python",
+      "args": ["-m", "sql_mcp_server.server"]
+    }
+  }
+}
+```
+
+---
+
+## Novas Ferramentas de Descoberta
+
+Para facilitar o uso em IDEs onde o agente não lê arquivos locais automaticamente, adicionamos duas ferramentas:
+
+1. `list_config_databases`: Lê o arquivo `mcp-config.json` da raiz do projeto e lista os bancos disponíveis (nomes e descrições).
+2. `connect_to_config_database`: Cria uma sessão automaticamente usando o nome do banco encontrado no `mcp-config.json`.
+
+**Fluxo Sugerido para Agentes:**
+1. Rodar `list_config_databases`.
+2. O usuário/agente escolhe o banco.
+3. Rodar `connect_to_config_database(name="nome_do_banco")`.
+4. Usar o `session_token` retornado para as demais operações.
+
 
 ## Registrar no VS Code
 

@@ -391,6 +391,92 @@ def revoke_session(session_token: str) -> dict[str, Any]:
 
 @mcp.tool()
 @_safe_tool
+def list_config_databases() -> dict[str, Any]:
+    """List databases defined in mcp-config.json in the current working directory."""
+    config_path = os.path.join(os.getcwd(), "mcp-config.json")
+    if not os.path.exists(config_path):
+        return {
+            "ok": False,
+            "error": "mcp-config.json not found in current directory.",
+            "cwd": os.getcwd()
+        }
+    
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        
+        databases = config.get("databases", [])
+        # Return a sanitized list for the agent to choose from
+        sanitized = []
+        for db in databases:
+            sanitized.append({
+                "name": db.get("name"),
+                "description": db.get("description"),
+                "has_url": bool(db.get("database_url"))
+            })
+        
+        return {"ok": True, "databases": sanitized}
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to read config: {str(e)}"}
+
+
+@mcp.tool()
+@_safe_tool
+def connect_to_config_database(
+    name: str,
+    schema: str | None = None,
+    statement_timeout_ms: int | None = None,
+    max_rows: int | None = None,
+    label: str | None = None,
+    allow_read: bool = True,
+    allow_insert: bool = False,
+    allow_update: bool = False,
+    allow_delete: bool = False,
+    allow_create: bool = False,
+    allow_drop: bool = False,
+) -> dict[str, Any]:
+    """Connect to a database defined in mcp-config.json by its name."""
+    config_path = os.path.join(os.getcwd(), "mcp-config.json")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"mcp-config.json not found in {os.getcwd()}")
+    
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    
+    target = next((db for db in config.get("databases", []) if db.get("name") == name), None)
+    if not target:
+        raise ValueError(f"Database '{name}' not found in mcp-config.json")
+    
+    db_url = target.get("database_url")
+    if not db_url:
+        raise ValueError(f"Database '{name}' has no database_url defined")
+
+    # Use permissions from config if not explicitly overridden by tool call
+    # Defaulting to what's in the config OR the tool arguments
+    p_read = target.get("allow_read", allow_read)
+    p_insert = target.get("allow_insert", allow_insert)
+    p_update = target.get("allow_update", allow_update)
+    p_delete = target.get("allow_delete", allow_delete)
+    p_create = target.get("allow_create", allow_create)
+    p_drop = target.get("allow_drop", allow_drop)
+
+    return create_session(
+        database_url=db_url,
+        schema=schema or target.get("schema"),
+        statement_timeout_ms=statement_timeout_ms or target.get("statement_timeout_ms"),
+        max_rows=max_rows or target.get("max_rows"),
+        label=label or name,
+        allow_read=p_read,
+        allow_insert=p_insert,
+        allow_update=p_update,
+        allow_delete=p_delete,
+        allow_create=p_create,
+        allow_drop=p_drop,
+    )
+
+
+@mcp.tool()
+@_safe_tool
 def get_session_info(session_token: str) -> dict[str, Any]:
     """Check the details and active permissions of a specific session token."""
     session = SESSION_STORE.get(session_token)
@@ -686,15 +772,45 @@ def query(
 
 
 def main() -> None:
-    transport = os.environ.get("MCP_TRANSPORT", "streamable-http")
+    # If standard output is not a TTY and no transport is specified, 
+    # we might be running as a subprocess in an IDE, default to stdio.
+    default_transport = "streamable-http"
+    if not sys.stdin.isatty() and "MCP_TRANSPORT" not in os.environ:
+        default_transport = "stdio"
 
-    print("Subindo MCP em modo puramente dinâmico. Servidor aguardando requests com session_token válidos.", file=sys.stderr)
+    transport = os.environ.get("MCP_TRANSPORT", default_transport)
 
-    try:
-        mcp.run(transport=transport)
-    except Exception as exc:
-        print(f"MCP server failed: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+    if transport == "both":
+        import threading
+        print("Starting MCP server in BOTH stdio and http modes...", file=sys.stderr)
+        print(f"HTTP mode listening on port {os.environ.get('MCP_PORT', '3005')}...", file=sys.stderr)
+        
+        # Run HTTP in a background thread
+        http_thread = threading.Thread(
+            target=mcp.run, 
+            kwargs={"transport": "streamable-http"}, 
+            daemon=True
+        )
+        http_thread.start()
+        
+        # Run stdio in the main thread (blocking)
+        try:
+            mcp.run(transport="stdio")
+        except Exception as exc:
+            print(f"Stdio transport failed: {exc}", file=sys.stderr)
+    elif transport == "stdio":
+        print("Starting MCP server in stdio mode...", file=sys.stderr)
+        try:
+            mcp.run(transport=transport)
+        except Exception as exc:
+            print(f"Stdio transport failed: {exc}", file=sys.stderr)
+    else:
+        print(f"Starting MCP server in {transport} mode on port {os.environ.get('MCP_PORT', '3005')}...", file=sys.stderr)
+        try:
+            mcp.run(transport=transport)
+        except Exception as exc:
+            print(f"HTTP transport failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
