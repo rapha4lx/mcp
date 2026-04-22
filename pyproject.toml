@@ -1,7 +1,7 @@
 [project]
-name = "sql-mcp-server"
+name = "sessiondb-mcp"
 version = "0.1.0"
-description = "MCP server to expose safe SQL databases read tools to agent clients."
+description = "SessionDB MCP: session-based MCP server for controlled SQL database access by agents."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -35,7 +35,7 @@ Homepage = "https://github.com/rapha4lx/mcp"
 Issues = "https://github.com/rapha4lx/mcp/issues"
 
 [project.scripts]
-sql-mcp-server = "sql_mcp_server.secure_server:main"
+sessiondb-mcp = "sql_mcp_server.secure_server:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
