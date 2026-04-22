@@ -2,6 +2,10 @@
 
 Servidor MCP em Python para expor consultas seguras de leitura a bancos de dados SQL (Postgres, MySQL, SQLite, etc.) como tools para agentes.
 
+## Project status and support
+
+Este projeto está sendo preparado para uso open source. Issues e pull requests são bem-vindos, mas mudanças grandes devem começar por uma issue para alinhar escopo, segurança e compatibilidade.
+
 ## O que ele expõe
 
 - `create_session`: cria uma token configurando a URI do banco dinamicamente bem como definindo as flags de permissões (`allow_read`, `allow_insert`, etc) desejadas.
@@ -311,3 +315,9 @@ As tools de leitura aceitam `session_token`:
 
 > [!CAUTION]
 > Dando os comandos ao LLM e o acesso a flags `allow_delete` ou `allow_drop`, ele pode de fato resetar infraestruturas inteiras no provedor em caso de problemas não supervisionados. Esteja ciente ao permitir conexões Master ou conceder essas flags globais que alteram o escopo.
+
+## License and contributions
+
+Este projeto está licenciado sob a licença MIT. Veja [`LICENSE`](./LICENSE).
+
+Ao contribuir, você concorda que suas contribuições serão distribuídas sob a mesma licença do projeto. Para mudanças maiores, abra uma issue antes de começar a implementação para alinhar escopo e impacto.
