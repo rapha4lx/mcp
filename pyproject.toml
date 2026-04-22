@@ -34,7 +34,7 @@ Homepage = "https://github.com/rapha4lx/mcp"
 Issues = "https://github.com/rapha4lx/mcp/issues"
 
 [project.scripts]
-sql-mcp-server = "sql_mcp_server.server:main"
+sql-mcp-server = "sql_mcp_server.secure_server:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
