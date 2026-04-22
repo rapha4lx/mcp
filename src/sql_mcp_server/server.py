@@ -29,6 +29,11 @@ DRIVER_MAP = {
     "mysql+pymysql": "pymysql",
     "mssql+pyodbc": "pyodbc",
 }
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+QUALIFIED_TARGET_RE = re.compile(
+    r"\b(from|join|update|into|table|truncate)\s+([A-Za-z_][A-Za-z0-9_$]*)\.([A-Za-z_][A-Za-z0-9_$]*)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -300,10 +305,53 @@ def _safe_tool(fn):
     return wrapped
 
 
+def _validated_identifier(identifier: str, *, label: str) -> str:
+    normalized = identifier.strip()
+    if not IDENTIFIER_RE.match(normalized):
+        raise ValueError(f"{label} contains unsupported characters for connection-level schema enforcement.")
+    return normalized
+
+
+def _apply_connection_constraints(conn: Any, context: RequestContext) -> None:
+    engine_name = conn.engine.name.lower()
+    schema = _validated_identifier(context.schema, label="schema")
+
+    if "postgres" in engine_name:
+        conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+        conn.exec_driver_sql(f"SET statement_timeout = {int(context.statement_timeout_ms)}")
+    elif "mysql" in engine_name:
+        conn.exec_driver_sql(f"USE `{schema}`")
+
+
+def _validate_sql_schema_scope(sql: str, context: RequestContext, engine_name: str) -> str:
+    normalized = _normalize_sql(sql)
+    lowered = normalized.lower()
+    expected_schema = context.schema.lower()
+
+    if "postgres" in engine_name:
+        if re.search(r"\bset\s+(?:local\s+)?search_path\b", lowered):
+            raise ValueError("Query rejected: changing search_path is not allowed.")
+        if re.search(r"\bset\s+schema\b", lowered):
+            raise ValueError("Query rejected: changing schema context is not allowed.")
+    elif "mysql" in engine_name:
+        if re.search(r"\buse\s+[A-Za-z_][A-Za-z0-9_$]*\b", lowered):
+            raise ValueError("Query rejected: changing database context with USE is not allowed.")
+
+    for match in QUALIFIED_TARGET_RE.finditer(normalized):
+        qualifier = match.group(2)
+        if qualifier.lower() != expected_schema:
+            raise ValueError(
+                f"Query rejected: explicit cross-schema reference '{qualifier}.{match.group(3)}' is outside the active schema '{context.schema}'."
+            )
+
+    return normalized
+
+
 def _validate_database_connection(context: RequestContext) -> dict[str, Any]:
     database_name = "unknown"
     current_user = "unknown"
     with _connect(context) as conn:
+        _apply_connection_constraints(conn, context)
         engine = _get_engine(context)
         if "postgres" in engine.name:
             res = conn.exec_driver_sql("select current_database(), current_user").fetchone()
@@ -540,13 +588,14 @@ def list_tables(
         session_token=session_token,
         schema=schema,
     )
-    engine = _get_engine(context)
-    inspector = inspect(engine)
-    try:
-        tables = inspector.get_table_names(schema=context.schema)
-        rows = [{"table_schema": context.schema, "table_name": t, "table_type": "BASE TABLE"} for t in tables]
-    except Exception:
-        rows = []
+    with _connect(context) as conn:
+        _apply_connection_constraints(conn, context)
+        inspector = inspect(conn)
+        try:
+            tables = inspector.get_table_names(schema=context.schema)
+            rows = [{"table_schema": context.schema, "table_name": t, "table_type": "BASE TABLE"} for t in tables]
+        except Exception:
+            rows = []
 
     return {"schema": context.schema, "count": len(rows), "tables": rows}
 
@@ -562,13 +611,14 @@ def list_views(
         session_token=session_token,
         schema=schema,
     )
-    engine = _get_engine(context)
-    inspector = inspect(engine)
-    try:
-        views = inspector.get_view_names(schema=context.schema)
-        rows = [{"table_schema": context.schema, "table_name": v} for v in views]
-    except Exception:
-        rows = []
+    with _connect(context) as conn:
+        _apply_connection_constraints(conn, context)
+        inspector = inspect(conn)
+        try:
+            views = inspector.get_view_names(schema=context.schema)
+            rows = [{"table_schema": context.schema, "table_name": v} for v in views]
+        except Exception:
+            rows = []
 
     return {"schema": context.schema, "count": len(rows), "views": rows}
 
@@ -596,6 +646,7 @@ def list_functions(
     """
     try:
         with _connect(context) as conn:
+            _apply_connection_constraints(conn, context)
             result = conn.execute(text(sql), {"schema": context.schema})
             rows = [dict(r._mapping) for r in result.fetchall()]
     except Exception:
@@ -617,9 +668,10 @@ def list_referenced_tables(
         schema=schema,
     )
     schema_name, table_name = _qualified_name(context.schema, table)
-    engine = _get_engine(context)
-    inspector = inspect(engine)
-    fks = inspector.get_foreign_keys(table_name, schema=schema_name)
+    with _connect(context) as conn:
+        _apply_connection_constraints(conn, context)
+        inspector = inspect(conn)
+        fks = inspector.get_foreign_keys(table_name, schema=schema_name)
     rows = []
     for fk in fks:
         for idx, col in enumerate(fk.get("constrained_columns", [])):
@@ -659,31 +711,32 @@ def list_referencing_tables(
         schema=schema,
     )
     schema_name, table_name = _qualified_name(context.schema, table)
-    engine = _get_engine(context)
-    inspector = inspect(engine)
 
     rows = []
     try:
-        all_tables = inspector.get_table_names(schema=schema_name)
-        for other_table in all_tables:
-            fks = inspector.get_foreign_keys(other_table, schema=schema_name)
-            for fk in fks:
-                if fk.get("referred_table") == table_name:
-                    for idx, col in enumerate(fk.get("constrained_columns", [])):
-                        if idx < len(fk.get("referred_columns", [])):
-                            rel_col = fk["referred_columns"][idx]
-                            rows.append(
-                                {
-                                    "relation_direction": "incoming",
-                                    "table_schema": schema_name,
-                                    "table_name": other_table,
-                                    "column_name": col,
-                                    "related_table_schema": fk.get("referred_schema") or schema_name,
-                                    "related_table_name": table_name,
-                                    "related_column_name": rel_col,
-                                    "constraint_name": fk.get("name"),
-                                }
-                            )
+        with _connect(context) as conn:
+            _apply_connection_constraints(conn, context)
+            inspector = inspect(conn)
+            all_tables = inspector.get_table_names(schema=schema_name)
+            for other_table in all_tables:
+                fks = inspector.get_foreign_keys(other_table, schema=schema_name)
+                for fk in fks:
+                    if fk.get("referred_table") == table_name:
+                        for idx, col in enumerate(fk.get("constrained_columns", [])):
+                            if idx < len(fk.get("referred_columns", [])):
+                                rel_col = fk["referred_columns"][idx]
+                                rows.append(
+                                    {
+                                        "relation_direction": "incoming",
+                                        "table_schema": schema_name,
+                                        "table_name": other_table,
+                                        "column_name": col,
+                                        "related_table_schema": fk.get("referred_schema") or schema_name,
+                                        "related_table_name": table_name,
+                                        "related_column_name": rel_col,
+                                        "constraint_name": fk.get("name"),
+                                    }
+                                )
     except Exception:
         pass
 
@@ -756,20 +809,21 @@ def describe_table(
         schema=schema,
     )
     schema_name, table_name = _qualified_name(context.schema, table)
-    engine = _get_engine(context)
-    inspector = inspect(engine)
 
     try:
-        columns = inspector.get_columns(table_name, schema=schema_name)
-        rows = [
-            {
-                "column_name": col["name"],
-                "data_type": str(col["type"]),
-                "is_nullable": "YES" if col.get("nullable", True) else "NO",
-                "column_default": col.get("default"),
-            }
-            for col in columns
-        ]
+        with _connect(context) as conn:
+            _apply_connection_constraints(conn, context)
+            inspector = inspect(conn)
+            columns = inspector.get_columns(table_name, schema=schema_name)
+            rows = [
+                {
+                    "column_name": col["name"],
+                    "data_type": str(col["type"]),
+                    "is_nullable": "YES" if col.get("nullable", True) else "NO",
+                    "column_default": col.get("default"),
+                }
+                for col in columns
+            ]
     except Exception:
         rows = []
 
@@ -799,13 +853,16 @@ def query(
         max_rows=max_rows,
     )
     safe_sql = _validate_sql_permissions(sql, context.permissions)
+    engine_name = _get_engine(context).name.lower()
+    scoped_sql = _validate_sql_schema_scope(safe_sql, context, engine_name)
     params = _parse_params(params_json)
 
     row_limit = min(max_rows or context.max_rows, context.max_rows)
 
     with _connect(context) as conn:
         with conn.begin():
-            result = conn.exec_driver_sql(safe_sql, tuple(params) if params else None)
+            _apply_connection_constraints(conn, context)
+            result = conn.exec_driver_sql(scoped_sql, tuple(params) if params else None)
             column_names = list(result.keys()) if result.returns_rows else []
             rows = []
             if result.returns_rows:

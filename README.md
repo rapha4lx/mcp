@@ -228,6 +228,31 @@ MCP_TRANSPORT=both sql-mcp-server
 
 Se `MCP_TRANSPORT` não estiver definido e o servidor detectar execução como subprocesso de IDE, ele tenta usar `stdio`. Fora disso, o padrão é `streamable-http`.
 
+## Timeout e escopo de schema
+
+O comportamento de `statement_timeout_ms` e `schema` agora é explícito por backend.
+
+### PostgreSQL
+
+- `statement_timeout_ms` é aplicado na conexão com `SET statement_timeout`
+- o schema ativo é aplicado com `SET search_path`
+- `query()` também rejeita mudanças explícitas de `search_path` e referências cruzadas para outros schemas em cláusulas comuns como `FROM`, `JOIN`, `UPDATE`, `INTO`, `TABLE` e `TRUNCATE`
+
+### MySQL
+
+- o schema ativo é aplicado com `USE <schema>` na conexão
+- `query()` rejeita tentativas explícitas de mudar o contexto com `USE ...`
+- `statement_timeout_ms` é aceito na sessão, mas **não é aplicado automaticamente** no backend MySQL neste momento
+
+### SQLite e outros backends
+
+- não há garantia de enforcement de `statement_timeout_ms`
+- o campo `schema` pode ser aceito como configuração lógica da sessão, mas não representa um sandbox completo nesses backends
+
+### Importante
+
+O servidor aplica guardrails de schema para o fluxo de sessão e rejeita referências cruzadas óbvias em `query()`, mas isso **não substitui** isolamento nativo do banco, permissões do usuário do banco ou um parser SQL completo.
+
 ## Registrar no Cursor ou Antigravity
 
 Você pode conectar suas IDEs ao servidor de duas formas: via Python local ou via Docker.
