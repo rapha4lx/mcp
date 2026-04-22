@@ -9,9 +9,9 @@ Este projeto está sendo preparado para uso open source. Issues e pull requests 
 ## O que ele expõe
 
 - `create_session`: cria um token configurando a URI do banco dinamicamente e definindo flags de permissões (`allow_read`, `allow_insert`, etc.)
-- `list_sessions`: lista tokens ativos em memória e suas capacidades
+- `list_sessions`: lista sessões ativas; por padrão os tokens retornam mascarados
 - `revoke_session`: revoga um token manualmente
-- `get_session_info`: mostra os detalhes de uma sessão ativa
+- `get_session_info`: mostra os detalhes de uma sessão ativa; por padrão o token também retorna mascarado
 - `list_config_databases`: lê `mcp-config.json` e lista bancos disponíveis
 - `connect_to_config_database`: cria uma sessão usando um banco definido em `mcp-config.json`
 - `list_tables`: lista tabelas de um schema
@@ -43,6 +43,7 @@ PG_MAX_ROWS=200
 PG_STATEMENT_TIMEOUT_MS=10000
 PG_SESSION_TTL_HOURS=24
 SQL_MCP_AUTO_INSTALL_DRIVERS=false
+SQL_MCP_EXPOSE_SESSION_TOKENS=false
 MCP_TRANSPORT=streamable-http
 MCP_HOST=0.0.0.0
 MCP_PORT=3005
@@ -208,7 +209,7 @@ Para parar:
 docker compose down
 ```
 
-O `docker-compose.yml` foi mantido intencionalmente simples para funcionar em uma máquina limpa, sem exigir uma rede Docker externa criada previamente. A variável `SQL_MCP_AUTO_INSTALL_DRIVERS` também é repassada para o container.
+O `docker-compose.yml` foi mantido intencionalmente simples para funcionar em uma máquina limpa, sem exigir uma rede Docker externa criada previamente. As variáveis `SQL_MCP_AUTO_INSTALL_DRIVERS` e `SQL_MCP_EXPOSE_SESSION_TOKENS` também são repassadas para o container.
 
 ## Modos de transporte
 
@@ -253,6 +254,48 @@ O comportamento de `statement_timeout_ms` e `schema` agora é explícito por bac
 
 O servidor aplica guardrails de schema para o fluxo de sessão e rejeita referências cruzadas óbvias em `query()`, mas isso **não substitui** isolamento nativo do banco, permissões do usuário do banco ou um parser SQL completo.
 
+## Modelo de segurança e confiança
+
+Este servidor foi pensado principalmente para uso local ou em ambientes controlados por você. Ainda assim, o comportamento de exposição e descoberta agora é mais conservador.
+
+### Metadata tools exigem `allow_read`
+
+As ferramentas abaixo agora exigem `allow_read=true` na sessão ativa:
+
+- `list_tables`
+- `list_views`
+- `list_functions`
+- `list_referenced_tables`
+- `list_referencing_tables`
+- `list_related_tables`
+- `list_related_tables_detailed`
+- `describe_table`
+
+Isso alinha a descoberta de metadata com a mesma expectativa de permissão já usada em consultas de leitura.
+
+### Exposição de tokens de sessão
+
+Por padrão:
+
+- `create_session` retorna o token recém-criado, porque o cliente precisa dele
+- `list_sessions` retorna sessões com token mascarado
+- `get_session_info` retorna detalhes da sessão com token mascarado
+
+Se você realmente quiser expor tokens em ferramentas de inspeção para debugging local, habilite:
+
+```bash
+SQL_MCP_EXPOSE_SESSION_TOKENS=true
+```
+
+Mesmo com essa variável habilitada, `list_sessions` só expõe tokens quando chamada com `include_tokens=true`, e `get_session_info` só expõe o token quando chamada com `include_token=true`.
+
+### Recomendação operacional
+
+- use usuários de banco com permissões mínimas
+- trate o token de sessão como segredo transitório
+- não exponha esse servidor diretamente na internet sem uma camada adicional de autenticação, autorização e rede
+- prefira deixar `SQL_MCP_EXPOSE_SESSION_TOKENS=false` fora de ambientes de desenvolvimento local
+
 ## Registrar no Cursor ou Antigravity
 
 Você pode conectar suas IDEs ao servidor de duas formas: via Python local ou via Docker.
@@ -269,7 +312,7 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 4. **Type**: `command`
 5. **Command**:
    ```bash
-   docker exec -i sql-mcp-tool python -m sql_mcp_server.server
+   docker exec -i sql-mcp-tool sql-mcp-server
    ```
 
 #### Antigravity
@@ -279,7 +322,7 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
   "mcpServers": {
     "sql-shared": {
       "command": "docker",
-      "args": ["exec", "-i", "sql-mcp-tool", "python", "-m", "sql_mcp_server.server"]
+      "args": ["exec", "-i", "sql-mcp-tool", "sql-mcp-server"]
     }
   }
 }
@@ -294,7 +337,7 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 3. **Type**: `command`
 4. **Command**:
    ```bash
-   /caminho/absoluto/do/projeto/.venv/bin/python -m sql_mcp_server.server
+   /caminho/absoluto/do/projeto/.venv/bin/sql-mcp-server
    ```
 
 #### Antigravity
@@ -303,8 +346,7 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 {
   "mcpServers": {
     "sql-local": {
-      "command": "/caminho/para/seu/.venv/bin/python",
-      "args": ["-m", "sql_mcp_server.server"]
+      "command": "/caminho/para/seu/.venv/bin/sql-mcp-server"
     }
   }
 }
