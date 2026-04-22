@@ -860,8 +860,8 @@ def query(
     row_limit = min(max_rows or context.max_rows, context.max_rows)
 
     with _connect(context) as conn:
-        _apply_connection_constraints(conn, context)
         with conn.begin():
+            _apply_connection_constraints(conn, context)
             result = conn.exec_driver_sql(scoped_sql, tuple(params) if params else None)
             column_names = list(result.keys()) if result.returns_rows else []
             rows = []
