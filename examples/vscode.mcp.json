@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "sql_tools": {
+      "type": "http",
+      "url": "http://localhost:3005/mcp"
+    }
+  }
+}
