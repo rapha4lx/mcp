@@ -8,10 +8,13 @@ Este projeto está sendo preparado para uso open source. Issues e pull requests 
 
 ## O que ele expõe
 
-- `create_session`: cria uma token configurando a URI do banco dinamicamente bem como definindo as flags de permissões (`allow_read`, `allow_insert`, etc) desejadas.
-- `list_sessions`: lista tokens ativos em memória e suas capacidades.
+- `create_session`: cria um token configurando a URI do banco dinamicamente e definindo flags de permissões (`allow_read`, `allow_insert`, etc.)
+- `list_sessions`: lista tokens ativos em memória e suas capacidades
 - `revoke_session`: revoga um token manualmente
-- `list_tables`: lista tabelas e views de um schema
+- `get_session_info`: mostra os detalhes de uma sessão ativa
+- `list_config_databases`: lê `mcp-config.json` e lista bancos disponíveis
+- `connect_to_config_database`: cria uma sessão usando um banco definido em `mcp-config.json`
+- `list_tables`: lista tabelas de um schema
 - `list_views`: lista views de um schema
 - `list_functions`: lista functions de um schema
 - `list_referenced_tables`: lista tabelas referenciadas por uma tabela
@@ -19,37 +22,69 @@ Este projeto está sendo preparado para uso open source. Issues e pull requests 
 - `list_related_tables`: versão rápida, só com nomes das tabelas relacionadas
 - `list_related_tables_detailed`: versão detalhada, com colunas e constraints
 - `describe_table`: descreve colunas de uma tabela/view
-- `query`: executa queries genéricas (SELECT, INSERT, UPDATE, etc). Sua execução dependerá estritamente das flags preenchidas durante o `create_session`.
+- `query`: executa queries genéricas (SELECT, INSERT, UPDATE, etc.), respeitando as flags definidas em `create_session`
 
-## Configuração do Servidor
+## Quick start
 
-Crie um ambiente virtual e instale as dependências:
+### 1. Instalação local
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+cp .env.example .env
 ```
 
-O projeto já inclui um arquivo `.env` base na raiz. Ajuste os valores do servidor conforme necessário:
+Edite `.env` conforme necessário:
 
 ```bash
-PG_SCHEMA='public'
-PG_MAX_ROWS='200'
-PG_STATEMENT_TIMEOUT_MS='10000'
-PG_SESSION_TTL_HOURS='24'
-MCP_TRANSPORT='streamable-http'
-MCP_HOST='0.0.0.0'
-MCP_PORT='3005'
+PG_SCHEMA=public
+PG_MAX_ROWS=200
+PG_STATEMENT_TIMEOUT_MS=10000
+PG_SESSION_TTL_HOURS=24
+MCP_TRANSPORT=streamable-http
+MCP_HOST=0.0.0.0
+MCP_PORT=3005
 ```
 
-O servidor carrega automaticamente esse `.env`. Se você também definir variáveis no ambiente do processo, elas continuam valendo como override.
+### 2. Subir com Docker Compose
 
-Todo o fluxo agora é 100% focado no modo dinâmico associado aos seus IAs! Não existe mais uma URL de banco salva no `.env` global, tudo é informado e validado por eles através de sessões (Tokens).
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
 
-## Configuração do Cliente
+### 3. Teste rápido
 
-O cliente não deve mais buscar credenciais em `.env`. O fluxo recomendado é ler um arquivo `mcp-config.json` na raiz do projeto que está sendo usado pelo chat.
+Se o cliente aceitar MCP remoto via HTTP, use:
+
+```text
+http://localhost:3005/mcp
+```
+
+Um teste simples para verificar se a porta HTTP subiu:
+
+```bash
+curl -i http://localhost:3005/mcp
+```
+
+## Arquivos de configuração incluídos no repositório
+
+Arquivos rastreados pelo repositório:
+
+- `.env.example`: exemplo de variáveis do servidor
+- `mcp-config.example.json`: exemplo de configuração de bancos para o cliente
+- `examples/vscode.mcp.json`: exemplo de configuração para VS Code
+
+Arquivos que **você** deve criar localmente:
+
+- `.env`: sua configuração local do servidor
+- `mcp-config.json`: configuração local dos bancos usados pelo seu cliente/agente
+- `.vscode/mcp.json`: opcional, se quiser usar configuração local do workspace no VS Code
+
+## Configuração do cliente
+
+O cliente não deve buscar credenciais em `.env`. O fluxo recomendado é ler um arquivo `mcp-config.json` na raiz do projeto que está sendo usado pelo chat.
 
 Estrutura esperada:
 
@@ -72,14 +107,14 @@ Estrutura esperada:
 
 O projeto inclui um exemplo em [mcp-config.example.json](./mcp-config.example.json).
 
-Regras de uso para o chat:
+### Fluxo recomendado para o chat
 
-1. ler `mcp-config.json` na raiz do projeto atual
-2. identificar quais bancos estão disponíveis em `databases`
-3. usar o campo `description` para inferir qual banco faz mais sentido para a pergunta do usuário
-4. chamar `create_session` com a `database_url` do banco escolhido
-5. guardar o `session_token` retornado em memória e reutilizar nas próximas tools
-6. se a pergunta envolver mais de um domínio, criar mais de uma sessão e consultar múltiplos bancos
+1. Ler `mcp-config.json` na raiz do projeto atual
+2. Identificar quais bancos estão disponíveis em `databases`
+3. Usar o campo `description` para inferir qual banco faz mais sentido para a pergunta do usuário
+4. Chamar `create_session` com a `database_url` do banco escolhido
+5. Guardar o `session_token` retornado em memória e reutilizar nas próximas tools
+6. Se a pergunta envolver mais de um domínio, criar mais de uma sessão e consultar múltiplos bancos
 
 ## Executar localmente
 
@@ -90,19 +125,19 @@ sql-mcp-server
 
 ## Executar com Docker
 
-Build da imagem:
+### Build manual
 
 ```bash
 docker build -t sql-mcp-server .
 ```
 
-Execução usando o `.env` local:
+### Execução com `.env`
 
 ```bash
 docker run --rm -i --env-file .env sql-mcp-server
 ```
 
-Publicando a porta `3005`:
+### Publicando a porta `3005`
 
 ```bash
 docker run --rm -i -p 3005:3005 --env-file .env sql-mcp-server
@@ -110,33 +145,50 @@ docker run --rm -i -p 3005:3005 --env-file .env sql-mcp-server
 
 Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajuste o host do `DATABASE_URL` para um endereço acessível do container. Em Linux, normalmente isso significa usar o IP da máquina na rede Docker em vez de `localhost`.
 
-Com Docker Compose:
+### Docker Compose
 
 ```bash
-docker compose -f docker-compose.yml run --rm sql-mcp-server
+docker compose up --build -d
 ```
 
-Para subir o serviço na porta `3005`:
+Para parar:
 
 ```bash
-docker compose -f docker-compose.yml up --build -d
+docker compose down
 ```
 
-O `docker-compose.yml` sobe o MCP de modo limpo. O fluxo inteiro passa a depender de comandos `create_session` dinâmicos disparados pelos agentes.
+O `docker-compose.yml` foi mantido intencionalmente simples para funcionar em uma máquina limpa, sem exigir uma rede Docker externa criada previamente.
 
-Se o cliente aceitar MCP remoto via HTTP, use `http://localhost:3005/mcp`.
+## Modos de transporte
+
+O servidor suporta os seguintes modos:
+
+- `streamable-http`: melhor opção para expor `http://localhost:3005/mcp`
+- `stdio`: melhor opção quando a IDE executa o servidor como subprocesso local
+- `both`: útil para cenários avançados em que você quer HTTP e stdio no mesmo processo
+
+Exemplos:
+
+```bash
+MCP_TRANSPORT=streamable-http sql-mcp-server
+MCP_TRANSPORT=stdio sql-mcp-server
+MCP_TRANSPORT=both sql-mcp-server
+```
+
+Se `MCP_TRANSPORT` não estiver definido e o servidor detectar execução como subprocesso de IDE, ele tenta usar `stdio`. Fora disso, o padrão é `streamable-http`.
 
 ## Registrar no Cursor ou Antigravity
 
 Você pode conectar suas IDEs ao servidor de duas formas: via Python local ou via Docker.
 
-### 1. Conectar ao Container Docker em Execução (Recomendado)
+### 1. Conectar ao container Docker em execução
 
-Se você já subiu o container com `docker compose up -d`, pode fazer com que todas as IDEs se conectem ao **mesmo container**. Isso permite que elas compartilhem o mesmo estado e sessões.
+Se você já subiu o container com `docker compose up -d`, pode fazer com que várias IDEs se conectem ao mesmo container.
 
-#### No Cursor:
-1. Vá em **Settings** > **Cursor Settings** > **Features** > **MCP**.
-2. Clique em **+ Add New MCP Server**.
+#### Cursor
+
+1. Vá em **Settings** > **Cursor Settings** > **Features** > **MCP**
+2. Clique em **+ Add New MCP Server**
 3. **Name**: `SQL-Active`
 4. **Type**: `command`
 5. **Command**:
@@ -144,8 +196,7 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que to
    docker exec -i sql-mcp-tool python -m sql_mcp_server.server
    ```
 
-#### No Antigravity:
-Adicione no seu arquivo de configuração de servidores MCP:
+#### Antigravity
 
 ```json
 {
@@ -158,12 +209,11 @@ Adicione no seu arquivo de configuração de servidores MCP:
 }
 ```
 
-### 2. Rodar via Interpretador Python Local
+### 2. Rodar via interpretador Python local
 
-Se preferir rodar fora do Docker:
+#### Cursor
 
-#### No Cursor:
-1. Vá em **Features** > **MCP** > **+ Add New MCP Server**.
+1. Vá em **Features** > **MCP** > **+ Add New MCP Server**
 2. **Name**: `SQL-Local`
 3. **Type**: `command`
 4. **Command**:
@@ -171,7 +221,8 @@ Se preferir rodar fora do Docker:
    /caminho/absoluto/do/projeto/.venv/bin/python -m sql_mcp_server.server
    ```
 
-#### No Antigravity (Local):
+#### Antigravity
+
 ```json
 {
   "mcpServers": {
@@ -183,25 +234,11 @@ Se preferir rodar fora do Docker:
 }
 ```
 
----
-
-## Novas Ferramentas de Descoberta
-
-Para facilitar o uso em IDEs onde o agente não lê arquivos locais automaticamente, adicionamos duas ferramentas:
-
-1. `list_config_databases`: Lê o arquivo `mcp-config.json` da raiz do projeto e lista os bancos disponíveis (nomes e descrições).
-2. `connect_to_config_database`: Cria uma sessão automaticamente usando o nome do banco encontrado no `mcp-config.json`.
-
-**Fluxo Sugerido para Agentes:**
-1. Rodar `list_config_databases`.
-2. O usuário/agente escolhe o banco.
-3. Rodar `connect_to_config_database(name="nome_do_banco")`.
-4. Usar o `session_token` retornado para as demais operações.
-
-
 ## Registrar no VS Code
 
-O VS Code usa o arquivo `.vscode/mcp.json` no workspace. Este projeto já inclui:
+O VS Code usa o arquivo `.vscode/mcp.json` no workspace. O repositório inclui um exemplo em [`examples/vscode.mcp.json`](./examples/vscode.mcp.json).
+
+Exemplo:
 
 ```json
 {
@@ -214,18 +251,33 @@ O VS Code usa o arquivo `.vscode/mcp.json` no workspace. Este projeto já inclui
 }
 ```
 
-Para funcionar no VS Code:
+Para usar no VS Code:
 
-1. Suba o servidor com `docker compose -f docker-compose.yml up --build -d`
-2. Abra a pasta do projeto no VS Code
-3. Rode `MCP: List Servers` na Command Palette e confirme o trust do servidor
+1. Copie `examples/vscode.mcp.json` para `.vscode/mcp.json`
+2. Suba o servidor com `docker compose up --build -d`
+3. Abra a pasta do projeto no VS Code
+4. Rode `MCP: List Servers` na Command Palette e confirme o trust do servidor
+
+## Ferramentas de descoberta
+
+Para facilitar o uso em IDEs onde o agente não lê arquivos locais automaticamente, o projeto inclui:
+
+1. `list_config_databases`: lê o arquivo `mcp-config.json` da raiz do projeto e lista os bancos disponíveis
+2. `connect_to_config_database`: cria uma sessão automaticamente usando o nome do banco encontrado no `mcp-config.json`
+
+### Fluxo sugerido para agentes
+
+1. Rodar `list_config_databases`
+2. O usuário/agente escolhe o banco
+3. Rodar `connect_to_config_database(name="nome_do_banco")`
+4. Usar o `session_token` retornado para as demais operações
 
 ## Fluxo recomendado
 
-1. Chame `create_session` com `database_url` do banco desejado.
-2. Guarde o `session.token` retornado.
-3. Use `session_token` nas chamadas de metadata e query.
-4. Se precisar trocar de banco, crie outra sessão com outro token.
+1. Chame `create_session` com `database_url` do banco desejado
+2. Guarde o `session.token` retornado
+3. Use `session_token` nas chamadas de metadata e query
+4. Se precisar trocar de banco, crie outra sessão com outro token
 
 Exemplo de criação de sessão:
 
@@ -307,14 +359,14 @@ As tools de leitura aceitam `session_token`:
 ## Limitações e segurança
 
 - O modelo agora tem recursos de controle de acesso (RBAC). Um token de sessão herda os booleans definidos durante a invocação da tool `create_session` (ex: `allow_delete`).
-- Por padrão as Flags de modificação e DDL sempre começam como `false`, exigindo passe explícito.
+- Por padrão as flags de modificação e DDL sempre começam como `false`, exigindo passe explícito.
 - Se o LLM alucinar uma exclusão, ele só funcionará se o script Python tiver criado a sessão com essa flag. Ele lança rejections instantâneas sem bater no banco caso violadas.
 - O resultado é truncado no limite de linhas configurado.
 - Em caso de erro em uma tool, a resposta retorna `ok: false` com `error` e `error_type` para o requisitante.
 - As sessões ficam em memória do processo. Se o servidor reiniciar, os tokens são perdidos.
 
 > [!CAUTION]
-> Dando os comandos ao LLM e o acesso a flags `allow_delete` ou `allow_drop`, ele pode de fato resetar infraestruturas inteiras no provedor em caso de problemas não supervisionados. Esteja ciente ao permitir conexões Master ou conceder essas flags globais que alteram o escopo.
+> Dando os comandos ao LLM e o acesso a flags `allow_delete` ou `allow_drop`, ele pode de fato resetar infraestruturas inteiras no provedor em caso de problemas não supervisionados. Esteja ciente ao permitir conexões master ou conceder essas flags globais que alteram o escopo.
 
 ## License and contributions
 
