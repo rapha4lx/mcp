@@ -21,13 +21,6 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "3005:3005"
-    networks:
-      - mcp-shared-net
     volumes:
       - ./src:/app/src:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
-
-networks:
-  mcp-shared-net:
-    name: mcp-shared-net
-    external: true
