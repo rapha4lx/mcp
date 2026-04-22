@@ -4,7 +4,7 @@ services:
       context: .
     image: sql-mcp-tool
     container_name: sql-mcp-tool
-    command: ["python", "-m", "sql_mcp_server.server"]
+    command: ["sql-mcp-server"]
     restart: on-failure
     stdin_open: true
     tty: false
@@ -14,6 +14,7 @@ services:
       PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-10000}
       PG_SESSION_TTL_HOURS: ${PG_SESSION_TTL_HOURS:-24}
       SQL_MCP_AUTO_INSTALL_DRIVERS: ${SQL_MCP_AUTO_INSTALL_DRIVERS:-false}
+      SQL_MCP_EXPOSE_SESSION_TOKENS: ${SQL_MCP_EXPOSE_SESSION_TOKENS:-false}
       MCP_TRANSPORT: ${MCP_TRANSPORT:-streamable-http}
       MCP_HOST: ${MCP_HOST:-0.0.0.0}
       MCP_PORT: ${MCP_PORT:-3005}
