@@ -1,10 +1,10 @@
 services:
-  sql-mcp-tool:
+  sessiondb-mcp:
     build:
       context: .
-    image: sql-mcp-tool
-    container_name: sql-mcp-tool
-    command: ["sql-mcp-server"]
+    image: sessiondb-mcp
+    container_name: sessiondb-mcp
+    command: ["sessiondb-mcp"]
     restart: on-failure
     stdin_open: true
     tty: false

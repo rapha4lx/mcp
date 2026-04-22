@@ -1,6 +1,6 @@
-# SQL MCP Server
+# SessionDB MCP
 
-Servidor MCP em Python para expor consultas seguras de leitura a bancos de dados SQL (Postgres, MySQL, SQLite, etc.) como tools para agentes.
+Servidor MCP em Python para expor acesso controlado e baseado em sessão a bancos de dados SQL (Postgres, MySQL, SQLite, etc.) como tools para agentes.
 
 ## Project status and support
 
@@ -172,7 +172,7 @@ O projeto inclui um exemplo em [mcp-config.example.json](./mcp-config.example.js
 
 ```bash
 source .venv/bin/activate
-sql-mcp-server
+sessiondb-mcp
 ```
 
 ## Rodar testes localmente
@@ -190,19 +190,19 @@ A pipeline do GitHub Actions executa esse mesmo fluxo básico em pushes para `ma
 ### Build manual
 
 ```bash
-docker build -t sql-mcp-server .
+docker build -t sessiondb-mcp .
 ```
 
 ### Execução com `.env`
 
 ```bash
-docker run --rm -i --env-file .env sql-mcp-server
+docker run --rm -i --env-file .env sessiondb-mcp
 ```
 
 ### Publicando a porta `3005`
 
 ```bash
-docker run --rm -i -p 3005:3005 --env-file .env sql-mcp-server
+docker run --rm -i -p 3005:3005 --env-file .env sessiondb-mcp
 ```
 
 Se o banco estiver na sua máquina local e o container precisar acessá-lo, ajuste o host do `DATABASE_URL` para um endereço acessível do container. Em Linux, normalmente isso significa usar o IP da máquina na rede Docker em vez de `localhost`.
@@ -232,9 +232,9 @@ O servidor suporta os seguintes modos:
 Exemplos:
 
 ```bash
-MCP_TRANSPORT=streamable-http sql-mcp-server
-MCP_TRANSPORT=stdio sql-mcp-server
-MCP_TRANSPORT=both sql-mcp-server
+MCP_TRANSPORT=streamable-http sessiondb-mcp
+MCP_TRANSPORT=stdio sessiondb-mcp
+MCP_TRANSPORT=both sessiondb-mcp
 ```
 
 Se `MCP_TRANSPORT` não estiver definido e o servidor detectar execução como subprocesso de IDE, ele tenta usar `stdio`. Fora disso, o padrão é `streamable-http`.
@@ -318,11 +318,11 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 
 1. Vá em **Settings** > **Cursor Settings** > **Features** > **MCP**
 2. Clique em **+ Add New MCP Server**
-3. **Name**: `SQL-Active`
+3. **Name**: `SessionDB-Active`
 4. **Type**: `command`
 5. **Command**:
    ```bash
-   docker exec -i sql-mcp-tool sql-mcp-server
+   docker exec -i sessiondb-mcp sessiondb-mcp
    ```
 
 #### Antigravity
@@ -330,9 +330,9 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 ```json
 {
   "mcpServers": {
-    "sql-shared": {
+    "sessiondb-shared": {
       "command": "docker",
-      "args": ["exec", "-i", "sql-mcp-tool", "sql-mcp-server"]
+      "args": ["exec", "-i", "sessiondb-mcp", "sessiondb-mcp"]
     }
   }
 }
@@ -343,11 +343,11 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 #### Cursor
 
 1. Vá em **Features** > **MCP** > **+ Add New MCP Server**
-2. **Name**: `SQL-Local`
+2. **Name**: `SessionDB-Local`
 3. **Type**: `command`
 4. **Command**:
    ```bash
-   /caminho/absoluto/do/projeto/.venv/bin/sql-mcp-server
+   /caminho/absoluto/do/projeto/.venv/bin/sessiondb-mcp
    ```
 
 #### Antigravity
@@ -355,8 +355,8 @@ Se você já subiu o container com `docker compose up -d`, pode fazer com que v�
 ```json
 {
   "mcpServers": {
-    "sql-local": {
-      "command": "/caminho/para/seu/.venv/bin/sql-mcp-server"
+    "sessiondb-local": {
+      "command": "/caminho/para/seu/.venv/bin/sessiondb-mcp"
     }
   }
 }
@@ -371,7 +371,7 @@ Exemplo:
 ```json
 {
   "servers": {
-    "sql_tools": {
+    "sessiondb_mcp": {
       "type": "http",
       "url": "http://localhost:3005/mcp"
     }
