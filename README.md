@@ -42,6 +42,7 @@ PG_SCHEMA=public
 PG_MAX_ROWS=200
 PG_STATEMENT_TIMEOUT_MS=10000
 PG_SESSION_TTL_HOURS=24
+SQL_MCP_AUTO_INSTALL_DRIVERS=false
 MCP_TRANSPORT=streamable-http
 MCP_HOST=0.0.0.0
 MCP_PORT=3005
@@ -67,6 +68,56 @@ Um teste simples para verificar se a porta HTTP subiu:
 ```bash
 curl -i http://localhost:3005/mcp
 ```
+
+## Instalação de drivers de banco
+
+O caminho recomendado é instalar os drivers explicitamente via extras do pacote, em vez de depender de instalação dinâmica em runtime.
+
+Exemplos:
+
+```bash
+pip install -e .[postgres]
+pip install -e .[postgres-psycopg2]
+pip install -e .[mysql]
+pip install -e .[mssql]
+pip install -e .[all]
+```
+
+Extras disponíveis:
+
+- `postgres`: instala `psycopg[binary]`
+- `postgres-psycopg2`: instala `psycopg2-binary`
+- `mysql`: instala `pymysql`
+- `mssql`: instala `pyodbc`
+- `all`: instala todos os drivers opcionais mapeados no projeto
+
+## Instalação automática de drivers em runtime
+
+O servidor consegue tentar instalar alguns drivers ausentes em runtime com `pip`, **mas esse comportamento vem desabilitado por padrão**.
+
+Variável de ambiente:
+
+```bash
+SQL_MCP_AUTO_INSTALL_DRIVERS=false
+```
+
+Para habilitar explicitamente:
+
+```bash
+SQL_MCP_AUTO_INSTALL_DRIVERS=true
+```
+
+Quando a instalação automática estiver desabilitada e um driver estiver ausente, o servidor falhará com uma mensagem orientando qual pacote instalar manualmente.
+
+### Quando usar
+
+Use `SQL_MCP_AUTO_INSTALL_DRIVERS=true` apenas se você aceitar:
+
+- mudanças dinâmicas no ambiente de execução
+- uso de rede durante a execução do servidor
+- menor previsibilidade operacional em comparação com dependências pré-instaladas
+
+Para produção, CI e ambientes corporativos, prefira pré-instalar os drivers necessários com extras do pacote ou por gestão explícita de dependências.
 
 ## Arquivos de configuração incluídos no repositório
 
@@ -157,7 +208,7 @@ Para parar:
 docker compose down
 ```
 
-O `docker-compose.yml` foi mantido intencionalmente simples para funcionar em uma máquina limpa, sem exigir uma rede Docker externa criada previamente.
+O `docker-compose.yml` foi mantido intencionalmente simples para funcionar em uma máquina limpa, sem exigir uma rede Docker externa criada previamente. A variável `SQL_MCP_AUTO_INSTALL_DRIVERS` também é repassada para o container.
 
 ## Modos de transporte
 
@@ -364,6 +415,7 @@ As tools de leitura aceitam `session_token`:
 - O resultado é truncado no limite de linhas configurado.
 - Em caso de erro em uma tool, a resposta retorna `ok: false` com `error` e `error_type` para o requisitante.
 - As sessões ficam em memória do processo. Se o servidor reiniciar, os tokens são perdidos.
+- A instalação automática de drivers pode alterar o ambiente do processo em runtime se `SQL_MCP_AUTO_INSTALL_DRIVERS=true` estiver habilitado.
 
 > [!CAUTION]
 > Dando os comandos ao LLM e o acesso a flags `allow_delete` ou `allow_drop`, ele pode de fato resetar infraestruturas inteiras no provedor em caso de problemas não supervisionados. Esteja ciente ao permitir conexões master ou conceder essas flags globais que alteram o escopo.
