@@ -175,6 +175,16 @@ source .venv/bin/activate
 sql-mcp-server
 ```
 
+## Rodar testes localmente
+
+```bash
+source .venv/bin/activate
+pip install -e .[test]
+pytest -q
+```
+
+A pipeline do GitHub Actions executa esse mesmo fluxo básico em pushes para `main` e em pull requests.
+
 ## Executar com Docker
 
 ### Build manual
