@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
 import secrets
-import sys
 import subprocess
-import importlib
+import sys
 from urllib.parse import urlparse
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import NoSuchModuleError
 
 DRIVER_MAP = {
     "postgresql": "psycopg[binary]",
@@ -29,12 +30,15 @@ DRIVER_MAP = {
     "mssql+pyodbc": "pyodbc",
 }
 
+
 @dataclass(frozen=True)
 class Settings:
     default_schema: str
     statement_timeout_ms: int
     max_rows: int
     session_ttl_hours: int
+    auto_install_drivers: bool
+
 
 @dataclass(frozen=True)
 class RequestContext:
@@ -43,6 +47,7 @@ class RequestContext:
     statement_timeout_ms: int
     max_rows: int
     permissions: dict[str, bool]
+
 
 @dataclass(frozen=True)
 class SessionEntry:
@@ -67,6 +72,7 @@ class SessionEntry:
             "created_at": self.created_at.isoformat(),
             "expires_at": self.expires_at.isoformat(),
         }
+
 
 class SessionStore:
     def __init__(self, ttl_hours: int) -> None:
@@ -127,6 +133,18 @@ class SessionStore:
             self._sessions.pop(token, None)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean-like value (true/false, 1/0, yes/no, on/off).")
+
+
 def load_settings() -> Settings:
     load_dotenv()
     return Settings(
@@ -134,6 +152,7 @@ def load_settings() -> Settings:
         statement_timeout_ms=int(os.environ.get("PG_STATEMENT_TIMEOUT_MS", "10000")),
         max_rows=int(os.environ.get("PG_MAX_ROWS", "200")),
         session_ttl_hours=int(os.environ.get("PG_SESSION_TTL_HOURS", "24")),
+        auto_install_drivers=_env_bool("SQL_MCP_AUTO_INSTALL_DRIVERS", False),
     )
 
 
@@ -151,23 +170,51 @@ _engines: dict[str, Engine] = {}
 _engines_lock = Lock()
 
 
+def _load_driver_module(database_url: str) -> None:
+    temp_engine = create_engine(database_url)
+    _ = temp_engine.dialect.dbapi
+
+
 def _ensure_driver(database_url: str) -> None:
     if not database_url:
         return
+
     parsed = urlparse(database_url.strip())
     scheme = parsed.scheme.lower()
-    
+    pkg = DRIVER_MAP.get(scheme)
+
     try:
-        temp_engine = create_engine(database_url)
-        _ = temp_engine.dialect.dbapi
-    except Exception:
-        pkg = DRIVER_MAP.get(scheme)
-        if pkg:
-            print(f"Driver for {scheme} not found. Dynamically installing {pkg}...", file=sys.stderr)
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-            importlib.invalidate_caches()
-        else:
-            print(f"No auto-install package mapped for scheme '{scheme}'. Attempting to proceed anyway...", file=sys.stderr)
+        _load_driver_module(database_url)
+        return
+    except ModuleNotFoundError as exc:
+        if not pkg:
+            raise RuntimeError(
+                f"Missing database driver for scheme '{scheme}', and no auto-install package mapping is defined. "
+                "Install the required driver manually before starting the server."
+            ) from exc
+
+        if not SETTINGS.auto_install_drivers:
+            raise RuntimeError(
+                f"Missing database driver for scheme '{scheme}'. Install '{pkg}' manually or enable "
+                "SQL_MCP_AUTO_INSTALL_DRIVERS=true to allow runtime installation."
+            ) from exc
+
+        print(f"Driver for {scheme} not found. Dynamically installing {pkg}...", file=sys.stderr)
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+        importlib.invalidate_caches()
+
+        try:
+            _load_driver_module(database_url)
+            return
+        except ModuleNotFoundError as retry_exc:
+            raise RuntimeError(
+                f"Driver installation for scheme '{scheme}' did not make the driver importable. "
+                f"Install '{pkg}' manually and retry."
+            ) from retry_exc
+    except NoSuchModuleError as exc:
+        raise RuntimeError(
+            f"Unsupported database URL scheme '{scheme}'. Check your SQLAlchemy driver prefix and connection string."
+        ) from exc
 
 
 def _get_engine(context: RequestContext) -> Engine:
@@ -192,7 +239,7 @@ def _resolve_request_context(
     fallback_permissions: dict[str, bool] | None = None,
 ) -> RequestContext:
     session_entry = SESSION_STORE.get(session_token) if session_token else None
-    
+
     resolved_database_url = (database_url or (session_entry.database_url if session_entry else None) or "").strip()
     if not resolved_database_url:
         raise ValueError("A database_url (during create_session) or session_token is strictly required.")
@@ -362,7 +409,7 @@ def create_session(
         max_rows=max_rows,
         fallback_permissions=permissions,
     )
-    
+
     connection_info = _validate_database_connection(context)
     session = SESSION_STORE.create(context, label=label)
     return {
@@ -398,23 +445,24 @@ def list_config_databases() -> dict[str, Any]:
         return {
             "ok": False,
             "error": "mcp-config.json not found in current directory.",
-            "cwd": os.getcwd()
+            "cwd": os.getcwd(),
         }
-    
+
     try:
         with open(config_path, "r") as f:
             config = json.load(f)
-        
+
         databases = config.get("databases", [])
-        # Return a sanitized list for the agent to choose from
         sanitized = []
         for db in databases:
-            sanitized.append({
-                "name": db.get("name"),
-                "description": db.get("description"),
-                "has_url": bool(db.get("database_url"))
-            })
-        
+            sanitized.append(
+                {
+                    "name": db.get("name"),
+                    "description": db.get("description"),
+                    "has_url": bool(db.get("database_url")),
+                }
+            )
+
         return {"ok": True, "databases": sanitized}
     except Exception as e:
         return {"ok": False, "error": f"Failed to read config: {str(e)}"}
@@ -439,20 +487,18 @@ def connect_to_config_database(
     config_path = os.path.join(os.getcwd(), "mcp-config.json")
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"mcp-config.json not found in {os.getcwd()}")
-    
+
     with open(config_path, "r") as f:
         config = json.load(f)
-    
+
     target = next((db for db in config.get("databases", []) if db.get("name") == name), None)
     if not target:
         raise ValueError(f"Database '{name}' not found in mcp-config.json")
-    
+
     db_url = target.get("database_url")
     if not db_url:
         raise ValueError(f"Database '{name}' has no database_url defined")
 
-    # Use permissions from config if not explicitly overridden by tool call
-    # Defaulting to what's in the config OR the tool arguments
     p_read = target.get("allow_read", allow_read)
     p_insert = target.get("allow_insert", allow_insert)
     p_update = target.get("allow_update", allow_update)
@@ -579,16 +625,18 @@ def list_referenced_tables(
         for idx, col in enumerate(fk.get("constrained_columns", [])):
             if idx < len(fk.get("referred_columns", [])):
                 rel_col = fk["referred_columns"][idx]
-                rows.append({
-                    "relation_direction": "outgoing",
-                    "table_schema": schema_name,
-                    "table_name": table_name,
-                    "column_name": col,
-                    "related_table_schema": fk.get("referred_schema") or schema_name,
-                    "related_table_name": fk.get("referred_table"),
-                    "related_column_name": rel_col,
-                    "constraint_name": fk.get("name")
-                })
+                rows.append(
+                    {
+                        "relation_direction": "outgoing",
+                        "table_schema": schema_name,
+                        "table_name": table_name,
+                        "column_name": col,
+                        "related_table_schema": fk.get("referred_schema") or schema_name,
+                        "related_table_name": fk.get("referred_table"),
+                        "related_column_name": rel_col,
+                        "constraint_name": fk.get("name"),
+                    }
+                )
 
     return {
         "schema": schema_name,
@@ -613,7 +661,7 @@ def list_referencing_tables(
     schema_name, table_name = _qualified_name(context.schema, table)
     engine = _get_engine(context)
     inspector = inspect(engine)
-    
+
     rows = []
     try:
         all_tables = inspector.get_table_names(schema=schema_name)
@@ -624,16 +672,18 @@ def list_referencing_tables(
                     for idx, col in enumerate(fk.get("constrained_columns", [])):
                         if idx < len(fk.get("referred_columns", [])):
                             rel_col = fk["referred_columns"][idx]
-                            rows.append({
-                                "relation_direction": "incoming",
-                                "table_schema": schema_name,
-                                "table_name": other_table,
-                                "column_name": col,
-                                "related_table_schema": fk.get("referred_schema") or schema_name,
-                                "related_table_name": table_name,
-                                "related_column_name": rel_col,
-                                "constraint_name": fk.get("name")
-                            })
+                            rows.append(
+                                {
+                                    "relation_direction": "incoming",
+                                    "table_schema": schema_name,
+                                    "table_name": other_table,
+                                    "column_name": col,
+                                    "related_table_schema": fk.get("referred_schema") or schema_name,
+                                    "related_table_name": table_name,
+                                    "related_column_name": rel_col,
+                                    "constraint_name": fk.get("name"),
+                                }
+                            )
     except Exception:
         pass
 
@@ -655,10 +705,10 @@ def list_related_tables(
     """List related table names for a given table."""
     referenced = list_referenced_tables(table, schema, session_token)
     referencing = list_referencing_tables(table, schema, session_token)
-    
+
     referenced_rows = [{"relation_direction": "outgoing", "related_table_schema": r["related_table_schema"], "related_table_name": r["related_table_name"]} for r in referenced.get("referenced_tables", [])]
     referencing_rows = [{"relation_direction": "incoming", "related_table_schema": r["table_schema"], "related_table_name": r["table_name"]} for r in referencing.get("referencing_tables", [])]
-    
+
     schema_name, table_name = _qualified_name(schema or "public", table)
 
     return {
@@ -708,7 +758,7 @@ def describe_table(
     schema_name, table_name = _qualified_name(context.schema, table)
     engine = _get_engine(context)
     inspector = inspect(engine)
-    
+
     try:
         columns = inspector.get_columns(table_name, schema=schema_name)
         rows = [
@@ -716,7 +766,7 @@ def describe_table(
                 "column_name": col["name"],
                 "data_type": str(col["type"]),
                 "is_nullable": "YES" if col.get("nullable", True) else "NO",
-                "column_default": col.get("default")
+                "column_default": col.get("default"),
             }
             for col in columns
         ]
@@ -750,11 +800,11 @@ def query(
     )
     safe_sql = _validate_sql_permissions(sql, context.permissions)
     params = _parse_params(params_json)
-    
+
     row_limit = min(max_rows or context.max_rows, context.max_rows)
 
     with _connect(context) as conn:
-        with conn.begin(): # Use explicit transaction so writings are auto-committed.
+        with conn.begin():
             result = conn.exec_driver_sql(safe_sql, tuple(params) if params else None)
             column_names = list(result.keys()) if result.returns_rows else []
             rows = []
@@ -772,8 +822,6 @@ def query(
 
 
 def main() -> None:
-    # If standard output is not a TTY and no transport is specified, 
-    # we might be running as a subprocess in an IDE, default to stdio.
     default_transport = "streamable-http"
     if not sys.stdin.isatty() and "MCP_TRANSPORT" not in os.environ:
         default_transport = "stdio"
@@ -782,18 +830,17 @@ def main() -> None:
 
     if transport == "both":
         import threading
+
         print("Starting MCP server in BOTH stdio and http modes...", file=sys.stderr)
         print(f"HTTP mode listening on port {os.environ.get('MCP_PORT', '3005')}...", file=sys.stderr)
-        
-        # Run HTTP in a background thread
+
         http_thread = threading.Thread(
-            target=mcp.run, 
-            kwargs={"transport": "streamable-http"}, 
-            daemon=True
+            target=mcp.run,
+            kwargs={"transport": "streamable-http"},
+            daemon=True,
         )
         http_thread.start()
-        
-        # Run stdio in the main thread (blocking)
+
         try:
             mcp.run(transport="stdio")
         except Exception as exc:
