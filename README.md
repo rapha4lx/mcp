@@ -2,9 +2,52 @@
 
 Servidor MCP em Python para expor acesso controlado e baseado em sessão a bancos de dados SQL (Postgres, MySQL, SQLite, etc.) como tools para agentes.
 
+## O que é MCP?
+
+MCP significa **Model Context Protocol**. Ele é um protocolo usado por clientes de IA, IDEs e agentes para conversar com ferramentas externas de forma padronizada.
+
+Em vez de dar acesso direto ao banco para um agente, você registra este servidor como um servidor MCP. O cliente MCP passa a enxergar ferramentas como `create_session`, `list_tables`, `describe_table` e `query`, e chama essas ferramentas quando precisa descobrir ou consultar dados.
+
+Na prática, o fluxo fica assim:
+
+1. Você sobe o SessionDB MCP localmente ou em um container.
+2. Você registra o endpoint ou comando no cliente MCP, como VS Code, Cursor ou Antigravity.
+3. O cliente chama uma tool para criar uma sessão de banco com permissões explícitas.
+4. As chamadas seguintes usam o `session_token` dessa sessão.
+5. O servidor aplica limites como schema, timeout, número máximo de linhas e permissões de escrita.
+
+## Para que serve este projeto?
+
+Use o SessionDB MCP quando quiser permitir que um agente:
+
+- entenda quais bancos estão disponíveis em um projeto
+- liste tabelas, views, functions e relacionamentos
+- descreva colunas antes de escrever SQL
+- execute queries com limite de linhas e timeout
+- use permissões diferentes para leitura, insert, update, delete e DDL
+- trabalhe com mais de um banco na mesma conversa sem misturar conexões
+
+Ele **não** substitui segurança nativa do banco. Continue usando usuários de banco com permissões mínimas, redes privadas, credenciais separadas por ambiente e revisão humana para operações destrutivas.
+
 ## Project status and support
 
 Este projeto está sendo preparado para uso open source. Issues e pull requests são bem-vindos, mas mudanças grandes devem começar por uma issue para alinhar escopo, segurança e compatibilidade.
+
+## Visão rápida da arquitetura
+
+```text
+Cliente MCP / IDE / agente
+        |
+        | chama tools MCP
+        v
+SessionDB MCP
+        |
+        | cria sessões, valida permissões, aplica schema/timeout/limites
+        v
+Banco SQL via SQLAlchemy
+```
+
+O cliente MCP nunca precisa chamar SQLAlchemy diretamente. Ele chama tools. O servidor guarda sessões em memória e devolve um token para reutilização durante a conversa.
 
 ## O que ele expõe
 
@@ -26,7 +69,11 @@ Este projeto está sendo preparado para uso open source. Issues e pull requests 
 
 ## Quick start
 
-### 1. Instalação local
+Escolha um dos caminhos abaixo.
+
+### Opção A: rodar localmente com Python
+
+Use este caminho quando sua IDE ou cliente MCP for executar o servidor como subprocesso local.
 
 ```bash
 python3 -m venv .venv
@@ -49,14 +96,20 @@ MCP_HOST=0.0.0.0
 MCP_PORT=3005
 ```
 
-### 2. Subir com Docker Compose
+Depois rode:
+
+```bash
+sessiondb-mcp
+```
+
+### Opção B: rodar com Docker Compose
+
+Use este caminho quando quiser deixar o servidor ativo em HTTP para um ou mais clientes MCP.
 
 ```bash
 cp .env.example .env
 docker compose up --build -d
 ```
-
-### 3. Teste rápido
 
 Se o cliente aceitar MCP remoto via HTTP, use:
 
@@ -69,6 +122,86 @@ Um teste simples para verificar se a porta HTTP subiu:
 ```bash
 curl -i http://localhost:3005/mcp
 ```
+
+> Observação: uma resposta `404`, `405` ou outro status HTTP pode indicar que a porta está ativa mesmo quando o endpoint espera uma chamada MCP específica. O objetivo desse `curl` é confirmar que o servidor está ouvindo.
+
+## Primeiro fluxo de uso
+
+Depois que o servidor estiver registrado no cliente MCP:
+
+1. Configure os bancos em `mcp-config.json` na raiz do projeto onde o agente está trabalhando.
+2. Chame `list_config_databases` para ver os bancos disponíveis sem expor a URL completa.
+3. Chame `connect_to_config_database` com o `name` escolhido.
+4. Guarde o `session.token` retornado.
+5. Use esse token em `list_tables`, `describe_table` e `query`.
+
+Exemplo de `mcp-config.json`:
+
+```json
+{
+  "databases": [
+    {
+      "name": "financeiro",
+      "database_url": "postgresql://usuario:senha@host:5432/financeiro_db",
+      "description": "Banco financeiro com contas a pagar, faturamento e fluxo de caixa.",
+      "schema": "public",
+      "allow_read": true,
+      "allow_insert": false,
+      "allow_update": false,
+      "allow_delete": false,
+      "allow_create": false,
+      "allow_drop": false
+    }
+  ]
+}
+```
+
+Exemplo de chamada para conectar:
+
+```json
+{
+  "name": "financeiro",
+  "max_rows": 100,
+  "statement_timeout_ms": 5000
+}
+```
+
+Depois use o token retornado:
+
+```json
+{
+  "session_token": "token-retornado-pelo-create-session",
+  "sql": "select id, email from customers order by created_at desc",
+  "max_rows": 20
+}
+```
+
+## Conceitos importantes
+
+### Sessão
+
+Uma sessão representa uma conexão lógica com um banco, schema, timeout, limite de linhas e permissões. Cada sessão tem um `session_token`.
+
+As sessões ficam em memória. Se o processo reiniciar, os tokens antigos deixam de existir.
+
+### Permissões
+
+As permissões são definidas quando a sessão é criada:
+
+- `allow_read`
+- `allow_insert`
+- `allow_update`
+- `allow_delete`
+- `allow_create`
+- `allow_drop`
+
+Por padrão, leitura vem habilitada e operações de escrita/DDL vem desabilitadas. Se o agente tentar executar uma operação sem permissão, o servidor rejeita antes de enviar ao banco.
+
+### Schema e limites
+
+O servidor tenta aplicar o schema ativo, `statement_timeout_ms` e `max_rows` de forma consistente. O nível exato de enforcement depende do backend SQL usado.
+
+Para isolamento forte, use também permissões nativas no usuário do banco.
 
 ## Instalação de drivers de banco
 
@@ -371,7 +504,7 @@ Exemplo:
 ```json
 {
   "servers": {
-    "sessiondb_mcp": {
+    "sql_tools": {
       "type": "http",
       "url": "http://localhost:3005/mcp"
     }
@@ -400,7 +533,9 @@ Para facilitar o uso em IDEs onde o agente não lê arquivos locais automaticame
 3. Rodar `connect_to_config_database(name="nome_do_banco")`
 4. Usar o `session_token` retornado para as demais operações
 
-## Fluxo recomendado
+## Fluxo manual com `create_session`
+
+O caminho mais simples para a maioria dos clientes é usar `mcp-config.json` com `list_config_databases` e `connect_to_config_database`. Use `create_session` diretamente quando o cliente já tem a URL do banco ou quando você quer criar uma sessão sem depender do arquivo de configuração.
 
 1. Chame `create_session` com `database_url` do banco desejado
 2. Guarde o `session.token` retornado
@@ -465,7 +600,7 @@ O servidor pode manter várias sessões ao mesmo tempo. Exemplo:
 Para consultar mais de um banco na mesma conversa:
 
 1. leia `mcp-config.json`
-2. crie uma sessão para cada banco necessário com `create_session`
+2. crie uma sessão para cada banco necessário com `connect_to_config_database` ou `create_session`
 3. mantenha os tokens em memória no cliente
 4. envie o token correto em cada tool call
 5. para comparar dados entre bancos, faça duas chamadas separadas e consolide o resultado no cliente
